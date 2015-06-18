@@ -1,21 +1,21 @@
 package com.couchbase.lite;
 
+import com.couchbase.lite.util.Log;
+
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.UUID;
-
-import com.couchbase.lite.util.Log;
 
 /**
  * @exclude
  */
 public class Misc {
 
-    public static String TDCreateUUID() {
+    public static String CreateUUID() {
         return UUID.randomUUID().toString().toLowerCase();
     }
 
-    public static String TDHexSHA1Digest(byte[] input) {
+    public static String HexSHA1Digest(byte[] input) {
         MessageDigest md;
         try {
             md = MessageDigest.getInstance("SHA-1");
@@ -45,7 +45,7 @@ public class Misc {
         return buf.toString();
     }
 
-    public static int TDSequenceCompare(long a, long b) {
+    public static int SequenceCompare(long a, long b) {
         long diff = a - b;
         return diff > 0 ? 1 : (diff < 0 ? -1 : 0);
     }

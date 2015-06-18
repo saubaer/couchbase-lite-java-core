@@ -18,7 +18,6 @@ package com.couchbase.lite.util;
 
 import java.io.ByteArrayOutputStream;
 import java.io.UnsupportedEncodingException;
-import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.Charset;
 
@@ -46,59 +45,6 @@ public class URIUtils {
             // This is highly unlikely since we always use UTF-8 encoding.
             throw new RuntimeException(e);
         }
-    }
-
-    /**
-     * Searches the query string for the first value with the given key.
-     *
-     * @param key which will be encoded
-     * @throws UnsupportedOperationException if this isn't a hierarchical URI
-     * @throws NullPointerException if key is null
-     * @return the decoded value or null if no parameter is found
-     */
-    public static String getQueryParameter(URI uri, String key) {
-        if (uri.isOpaque()) {
-            throw new UnsupportedOperationException(NOT_HIERARCHICAL);
-        }
-        if (key == null) {
-            throw new NullPointerException("key");
-        }
-
-        final String query = uri.getRawQuery();
-        if (query == null) {
-            return null;
-        }
-
-        final String encodedKey = encode(key, null);
-        final int length = query.length();
-        int start = 0;
-        do {
-            int nextAmpersand = query.indexOf('&', start);
-            int end = nextAmpersand != -1 ? nextAmpersand : length;
-
-            int separator = query.indexOf('=', start);
-            if (separator > end || separator == -1) {
-                separator = end;
-            }
-
-            if (separator - start == encodedKey.length()
-                    && query.regionMatches(start, encodedKey, 0, encodedKey.length())) {
-                if (separator == end) {
-                    return "";
-                } else {
-                    String encodedValue = query.substring(separator + 1, end);
-                    return decode(encodedValue, true, Charset.forName(UTF_8_ENCODING));
-                }
-            }
-
-            // Move start to end of name.
-            if (nextAmpersand != -1) {
-                start = nextAmpersand + 1;
-            } else {
-                break;
-            }
-        } while (true);
-        return null;
     }
 
     private static final char[] HEX_DIGITS = "0123456789ABCDEF".toCharArray();

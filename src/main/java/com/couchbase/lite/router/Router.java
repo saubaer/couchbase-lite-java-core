@@ -8,6 +8,7 @@ import com.couchbase.lite.ChangesOptions;
 import com.couchbase.lite.CouchbaseLiteException;
 import com.couchbase.lite.Database;
 import com.couchbase.lite.Database.TDContentOptions;
+import com.couchbase.lite.Document;
 import com.couchbase.lite.DocumentChange;
 import com.couchbase.lite.Manager;
 import com.couchbase.lite.Mapper;
@@ -19,7 +20,6 @@ import com.couchbase.lite.ReplicationFilter;
 import com.couchbase.lite.RevisionList;
 import com.couchbase.lite.Status;
 import com.couchbase.lite.View;
-import com.couchbase.lite.View.TDViewCollation;
 import com.couchbase.lite.auth.FacebookAuthorizer;
 import com.couchbase.lite.auth.PersonaAuthorizer;
 import com.couchbase.lite.internal.AttachmentInternal;
@@ -382,7 +382,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
             String name = path.get(1);
             if (!name.startsWith("_")) {
                 // Regular document
-                if (!Database.isValidDocumentId(name)) {
+                if (!Document.isValidDocumentId(name)) {
                     connection.setResponseCode(Status.BAD_REQUEST);
                     try {
                         connection.getResponseOutputStream().close();
@@ -974,7 +974,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
 
     public Status do_PUT_Database(Database _db, String _docID, String _attachmentName) {
         if (db.exists()) {
-            return new Status(Status.PRECONDITION_FAILED);
+            return new Status(Status.DUPLICATE);
         }
         if (!db.open()) {
             return new Status(Status.INTERNAL_SERVER_ERROR);
@@ -1389,7 +1389,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         // After collecting revisions, sort by sequence:
         Collections.sort(entries, new Comparator<Map<String, Object>>() {
             public int compare(Map<String, Object> e1, Map<String, Object> e2) {
-                return Misc.TDSequenceCompare((Long) e1.get("seq"), (Long) e2.get("seq"));
+                return Misc.SequenceCompare((Long) e1.get("seq"), (Long) e2.get("seq"));
             }
         });
 
@@ -1860,7 +1860,6 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
     /**
      * VIEW QUERIES: *
      */
-
     public View compileView(String viewName, Map<String, Object> viewProps) {
         String language = (String) viewProps.get("language");
         if (language == null) {
@@ -1889,7 +1888,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         view.setMapReduce(mapBlock, reduceBlock, "1");
         String collation = (String) viewProps.get("collation");
         if ("raw".equals(collation)) {
-            view.setCollation(TDViewCollation.TDViewCollationRaw);
+            view.setCollation(View.TDViewCollation.TDViewCollationRaw);
         }
         return view;
     }

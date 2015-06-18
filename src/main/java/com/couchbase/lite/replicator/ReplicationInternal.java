@@ -918,7 +918,7 @@ abstract class ReplicationInternal implements BlockingQueueListener{
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
-            remoteCheckpointDocID = Misc.TDHexSHA1Digest(inputBytes);
+            remoteCheckpointDocID = Misc.HexSHA1Digest(inputBytes);
             return remoteCheckpointDocID;
 
         }

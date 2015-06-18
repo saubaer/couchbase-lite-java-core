@@ -15,8 +15,8 @@ import com.couchbase.lite.internal.RevisionInternal;
 import com.couchbase.lite.support.HttpClientFactory;
 import com.couchbase.lite.support.RemoteRequest;
 import com.couchbase.lite.support.RemoteRequestCompletionBlock;
+import com.couchbase.lite.support.RevisionUtils;
 import com.couchbase.lite.util.Log;
-import com.couchbase.lite.util.URIUtils;
 import com.couchbase.lite.util.Utils;
 import com.couchbase.org.apache.http.entity.mime.MultipartEntity;
 import com.couchbase.org.apache.http.entity.mime.content.FileBody;
@@ -716,7 +716,7 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
             return 0;
         }
 
-        int generation = Database.parseRevIDNumber(ancestorID);
+        int generation = RevisionUtils.parseRevIDNumber(ancestorID);
 
         return generation;
     }

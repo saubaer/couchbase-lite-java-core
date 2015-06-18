@@ -31,7 +31,6 @@ public class StreamUtils {
         is.close();
     }
 
-
     public static void copyStreamsToFolder(Iterator<Map.Entry<String,InputStream>> streams, File folder) throws IOException {
 
         while(streams.hasNext()) {

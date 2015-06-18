@@ -83,7 +83,7 @@ public class RevisionList extends ArrayList<RevisionInternal> {
         Collections.sort(this, new Comparator<RevisionInternal>() {
 
             public int compare(RevisionInternal rev1, RevisionInternal rev2) {
-                return Misc.TDSequenceCompare(rev1.getSequence(), rev2.getSequence());
+                return Misc.SequenceCompare(rev1.getSequence(), rev2.getSequence());
             }
 
         });

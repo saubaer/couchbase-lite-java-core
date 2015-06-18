@@ -2,6 +2,7 @@ package com.couchbase.lite.replicator;
 
 import com.couchbase.lite.CouchbaseLiteException;
 import com.couchbase.lite.Database;
+import com.couchbase.lite.Document;
 import com.couchbase.lite.Manager;
 import com.couchbase.lite.Misc;
 import com.couchbase.lite.RevisionList;
@@ -552,7 +553,7 @@ public class PullerInternal extends ReplicationInternal implements ChangeTracker
         return new Comparator<RevisionInternal>() {
 
             public int compare(RevisionInternal reva, RevisionInternal revb) {
-                return Misc.TDSequenceCompare(reva.getSequence(), revb.getSequence());
+                return Misc.SequenceCompare(reva.getSequence(), revb.getSequence());
             }
 
         };
@@ -712,7 +713,7 @@ public class PullerInternal extends ReplicationInternal implements ChangeTracker
             return;
         }
 
-        if (!Database.isValidDocumentId(docID)) {
+        if (!Document.isValidDocumentId(docID)) {
             Log.w(Log.TAG_SYNC, "%s: Received invalid doc ID from _changes: %s", this, change);
             return;
         }

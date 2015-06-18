@@ -16,10 +16,15 @@
 
 package com.couchbase.lite.util;
 
+import com.couchbase.lite.Database;
+import com.couchbase.lite.internal.InterfaceAudience;
+
 import org.apache.http.util.ByteArrayBuffer;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 // COPY: Partially copied from android.text.TextUtils
 public class TextUtils {
@@ -56,4 +61,40 @@ public class TextUtils {
         return byteArrayBuffer.toByteArray();
     }
 
+    /**
+     * @exclude
+     */
+    @InterfaceAudience.Private
+    public static String joinQuoted(List<String> strings) {
+        if(strings.size() == 0) {
+            return "";
+        }
+
+        String result = "'";
+        boolean first = true;
+        for (String string : strings) {
+            if(first) {
+                first = false;
+            }
+            else {
+                result = result + "','";
+            }
+            result = result + Database.quote(string);
+        }
+        result = result + "'";
+
+        return result;
+    }
+
+    /**
+     * @exclude
+     */
+    @InterfaceAudience.Private
+    public static String joinQuotedObjects(List<Object> objects) {
+        List<String> strings = new ArrayList<String>();
+        for (Object object : objects) {
+            strings.add(object != null ? object.toString() : null);
+        }
+        return joinQuoted(strings);
+    }
 }

@@ -49,6 +49,19 @@ public class Document {
         this.documentId = documentId;
     }
 
+    @InterfaceAudience.Private
+    public static boolean isValidDocumentId(String id) {
+        // http://wiki.apache.org/couchdb/HTTP_Document_API#Documents
+        if(id == null || id.length() == 0) {
+            return false;
+        }
+        if(id.charAt(0) == '_') {
+            return  (id.startsWith("_design/"));
+        }
+        return true;
+        // "_local/*" is not a valid document ID. Local docs have their own API and shouldn't get here.
+    }
+
     /**
      * Get the document's owning database.
      */
