@@ -15,7 +15,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class SQLiteViewStorage implements ViewStorage {
+public class SQLiteViewStorage implements ViewStorage, QueryRowStorage {
 
     private abstract class AbstractMapEmitBlock implements Emitter {
         protected long sequence = 0;
@@ -552,7 +552,7 @@ public class SQLiteViewStorage implements ViewStorage {
                             );
                         }
                     }
-                    QueryRow row = new QueryRow(docId, sequence, keyDoc.jsonObject(), valueDoc.jsonObject(), docContents);
+                    QueryRow row = new QueryRow(docId, sequence, keyDoc.jsonObject(), valueDoc.jsonObject(), docContents, this);
                     row.setDatabase(db);
                     if (postFilter == null || postFilter.apply(row)) {
                         rows.add(row);
@@ -610,6 +610,19 @@ public class SQLiteViewStorage implements ViewStorage {
             }
         }
         return result;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////
+    // Implementation of QueryRowStorage
+    ///////////////////////////////////////////////////////////////////////////
+    @Override
+    public boolean rowValueIsEntireDoc(byte[] valueData) {
+        return false;
+    }
+
+    @Override
+    public Object parseRowValue(byte[] valueData) {
+        return null;
     }
     ///////////////////////////////////////////////////////////////////////////
     // Internal Instance Methods
@@ -755,7 +768,7 @@ public class SQLiteViewStorage implements ViewStorage {
                     // This pair starts a new group, so reduce & record the last one:
                     Object reduced = (delegate.getReduce() != null) ? delegate.getReduce().reduce(keysToReduce, valuesToReduce, false) : null;
                     Object key = View.groupKey(lastKey, groupLevel);
-                    QueryRow row = new QueryRow(null, 0, key, reduced, null);
+                    QueryRow row = new QueryRow(null, 0, key, reduced, null, this);
                     row.setDatabase(db);
                     if (postFilter == null || postFilter.apply(row)) {
                         rows.add(row);
@@ -782,7 +795,7 @@ public class SQLiteViewStorage implements ViewStorage {
             // Finish the last group (or the entire list, if no grouping):
             Object key = group ? View.groupKey(lastKey, groupLevel) : null;
             Object reduced = (delegate.getReduce() != null) ? delegate.getReduce().reduce(keysToReduce, valuesToReduce, false) : null;
-            QueryRow row = new QueryRow(null, 0, key, reduced, null);
+            QueryRow row = new QueryRow(null, 0, key, reduced, null, this);
             row.setDatabase(db);
             if (postFilter == null || postFilter.apply(row)) {
                 rows.add(row);

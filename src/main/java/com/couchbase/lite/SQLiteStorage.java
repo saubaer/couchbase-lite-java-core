@@ -2537,7 +2537,7 @@ public class SQLiteStorage implements Storage {
                 if (includeDeletedDocs){
                     value.put("deleted", (deleted ? true : null));
                 }
-                QueryRow change = new QueryRow(docId, sequenceNumber, docId, value, docContents);
+                QueryRow change = new QueryRow(docId, sequenceNumber, docId, value, docContents, null);
                 change.setDatabase(this.db);
                 if (options.getKeys() != null) {
                     docs.put(docId, change);
@@ -2569,7 +2569,7 @@ public class SQLiteStorage implements Storage {
                                     value.put("deleted", true);
                                 }
                             }
-                            change = new QueryRow((value != null ? docId : null), 0, docId, value, null);
+                            change = new QueryRow((value != null ? docId : null), 0, docId, value, null, null);
                             change.setDatabase(this.db);
                         }
                         rows.add(change);

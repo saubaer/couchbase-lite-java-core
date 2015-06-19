@@ -34,33 +34,15 @@ public final class View implements ViewStorageDelegate {
         TDViewCollationUnicode, TDViewCollationRaw, TDViewCollationASCII
     }
 
-    private ViewStorage viewStorage;
+    // Defined in CBLView.h
     private Database database;
     private String name;
-    private int viewId;
     private Mapper mapBlock;
     private Reducer reduceBlock;
     private static ViewCompiler compiler;
+    private ViewStorage storage;
 
-    ///////////////////////////////////////////////////////////////////////////
-    // Public Static Methods
-    ///////////////////////////////////////////////////////////////////////////
-
-    /**
-     * The registered object, if any, that can compile map/reduce functions from source code.
-     */
-    @InterfaceAudience.Public
-    public static ViewCompiler getCompiler() {
-        return compiler;
-    }
-
-    /**
-     * Registers an object that can compile map/reduce functions from source code.
-     */
-    @InterfaceAudience.Public
-    public static void setCompiler(ViewCompiler compiler) {
-        View.compiler = compiler;
-    }
+    private int viewId;
 
     ///////////////////////////////////////////////////////////////////////////
     // Constructor
@@ -71,7 +53,7 @@ public final class View implements ViewStorageDelegate {
         this.database = database;
         this.name = name;
         this.viewId = -1; // means 'unknown'
-        this.viewStorage = new SQLiteViewStorage(name, (SQLiteStorage) database.getStorage(), this, database);
+        this.storage = new SQLiteViewStorage(name, (SQLiteStorage) database.getStorage(), this, database);
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -101,20 +83,20 @@ public final class View implements ViewStorageDelegate {
         return null;
     }
 
+    /**
+     * If this property is set, only documents whose "type" property is equal to its value will be
+     * passed to the map block and indexed. This can speed up indexing.
+     * Just like the map block, this property is not persistent; it needs to be set at runtime before
+     * the view is queried. And if its value changes, the view's version also needs to change.
+     */
     @Override
     public String getDocumentType() {
         return null;
     }
 
     ///////////////////////////////////////////////////////////////////////////
-    // API
+    // API (CBLView.h/CBLView.m)
     ///////////////////////////////////////////////////////////////////////////
-
-    public void close(){
-        viewStorage.close();
-        viewStorage = null;
-        database = null;
-    }
 
     /**
      * Get the database that owns this view.
@@ -133,19 +115,33 @@ public final class View implements ViewStorageDelegate {
     }
 
     /**
-     * Is the view's index currently out of date?
+     * Defines a view's functions.
+     * <p/>
+     * The view's definition is given as a class that conforms to the Mapper or
+     * Reducer interface (or null to delete the view). The body of the block
+     * should call the 'emit' object (passed in as a paramter) for every key/value pair
+     * it wants to write to the view.
+     * <p/>
+     * Since the function itself is obviously not stored in the database (only a unique
+     * string idenfitying it), you must re-define the view on every launch of the app!
+     * If the database needs to rebuild the view but the function hasn't been defined yet,
+     * it will fail and the view will be empty, causing weird problems later on.
+     * <p/>
+     * It is very important that this block be a law-abiding map function! As in other
+     * languages, it must be a "pure" function, with no side effects, that always emits
+     * the same values given the same input document. That means that it should not access
+     * or change any external state; be careful, since callbacks make that so easy that you
+     * might do it inadvertently!  The callback may be called on any thread, or on
+     * multiple threads simultaneously. This won't be a problem if the code is "pure" as
+     * described above, since it will as a consequence also be thread-safe.
      */
     @InterfaceAudience.Public
-    public boolean isStale() {
-        return (viewStorage.getLastSequenceIndexed() < database.getLastSequenceNumber());
-    }
-
-    /**
-     * Get the last sequence number indexed so far.
-     */
-    @InterfaceAudience.Public
-    public long getLastSequenceIndexed() {
-        return viewStorage.getLastSequenceIndexed();
+    public boolean setMapReduce(Mapper mapBlock, Reducer reduceBlock, String version) {
+        assert (mapBlock != null);
+        assert (version != null);
+        this.mapBlock = mapBlock;
+        this.reduceBlock = reduceBlock;
+        return storage.setVersion(version);
     }
 
     /**
@@ -158,34 +154,19 @@ public final class View implements ViewStorageDelegate {
     }
 
     /**
-     * Defines a view's functions.
-     *
-     * The view's definition is given as a class that conforms to the Mapper or
-     * Reducer interface (or null to delete the view). The body of the block
-     * should call the 'emit' object (passed in as a paramter) for every key/value pair
-     * it wants to write to the view.
-     *
-     * Since the function itself is obviously not stored in the database (only a unique
-     * string idenfitying it), you must re-define the view on every launch of the app!
-     * If the database needs to rebuild the view but the function hasn't been defined yet,
-     * it will fail and the view will be empty, causing weird problems later on.
-     *
-     * It is very important that this block be a law-abiding map function! As in other
-     * languages, it must be a "pure" function, with no side effects, that always emits
-     * the same values given the same input document. That means that it should not access
-     * or change any external state; be careful, since callbacks make that so easy that you
-     * might do it inadvertently!  The callback may be called on any thread, or on
-     * multiple threads simultaneously. This won't be a problem if the code is "pure" as
-     * described above, since it will as a consequence also be thread-safe.
+     * Is the view's index currently out of date?
      */
     @InterfaceAudience.Public
-    public boolean setMapReduce(Mapper mapBlock,
-                                Reducer reduceBlock, String version) {
-        assert (mapBlock != null);
-        assert (version != null);
-        this.mapBlock = mapBlock;
-        this.reduceBlock = reduceBlock;
-        return viewStorage.setVersion(version);
+    public boolean isStale() {
+        return (storage.getLastSequenceIndexed() < database.getLastSequenceNumber());
+    }
+
+    /**
+     * Get the last sequence number indexed so far.
+     */
+    @InterfaceAudience.Public
+    public long getLastSequenceIndexed() {
+        return storage.getLastSequenceIndexed();
     }
 
     /**
@@ -193,11 +174,13 @@ public final class View implements ViewStorageDelegate {
      */
     @InterfaceAudience.Public
     public void deleteIndex() {
-        viewStorage.deleteIndex();
+        storage.deleteIndex();
     }
 
     /**
      * Deletes the view, persistently.
+     *
+     * NOTE: It should be - (void) deleteIndex;
      */
     @InterfaceAudience.Public
     public void delete() {
@@ -213,14 +196,64 @@ public final class View implements ViewStorageDelegate {
         return new Query(getDatabase(), this);
     }
 
-    @InterfaceAudience.Private
-    public int getViewId() {
-        return viewStorage.getViewId();
+    /**
+     * Utility function to use in reduce blocks. Totals an array of Numbers.
+     */
+    @InterfaceAudience.Public
+    public static double totalValues(List<Object> values) {
+        double total = 0;
+        for (Object object : values) {
+            if (object instanceof Number) {
+                Number number = (Number) object;
+                total += number.doubleValue();
+            } else {
+                Log.w(Log.TAG_VIEW, "Warning non-numeric value found in totalValues: %s", object);
+            }
+        }
+        return total;
     }
+
+    /**
+     * The registered object, if any, that can compile map/reduce functions from source code.
+     */
+    @InterfaceAudience.Public
+    public static ViewCompiler getCompiler() {
+        return compiler;
+    }
+
+    /**
+     * Registers an object that can compile map/reduce functions from source code.
+     */
+    @InterfaceAudience.Public
+    public static void setCompiler(ViewCompiler compiler) {
+        View.compiler = compiler;
+    }
+
+
+
+    ///////////////////////////////////////////////////////////////////////////
+    // Internal (CBLView+Internal.h)
+    ///////////////////////////////////////////////////////////////////////////
 
     @InterfaceAudience.Private
     public int getTotalRows() {
-        return viewStorage.getTotalRows();
+        return storage.getTotalRows();
+    }
+
+    private ViewStorage getStorage() {
+        return storage;
+    }
+
+
+    public void close() {
+        storage.close();
+        storage = null;
+        database = null;
+    }
+
+    @InterfaceAudience.Private
+    public int getViewId() {
+        return storage.getViewId();
     }
 
     @InterfaceAudience.Private
@@ -238,27 +271,27 @@ public final class View implements ViewStorageDelegate {
 
     @InterfaceAudience.Private
     public void setCollation(TDViewCollation collation) {
-        viewStorage.setCollation(collation);
+        storage.setCollation(collation);
     }
 
     /**
      * Updates the view's index (incrementally) if necessary.
+     *
      * @return 200 if updated, 304 if already up-to-date, else an error code
      */
     @InterfaceAudience.Private
     public void updateIndex() throws CouchbaseLiteException {
-        viewStorage.updateIndex();
+        storage.updateIndex();
     }
 
     /**
      * Queries the view. Does NOT first update the index.
-     *
      * @param options The options to use.
      * @return An array of QueryRow objects.
      */
     @InterfaceAudience.Private
     public List<QueryRow> queryWithOptions(QueryOptions options) throws CouchbaseLiteException {
-        return viewStorage.queryWithOptions(options);
+        return storage.queryWithOptions(options);
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -301,29 +334,12 @@ public final class View implements ViewStorageDelegate {
         }
     }
 
-    /**
-     * Utility function to use in reduce blocks. Totals an array of Numbers.
-     */
-    @InterfaceAudience.Public
-    public static double totalValues(List<Object> values) {
-        double total = 0;
-        for (Object object : values) {
-            if (object instanceof Number) {
-                Number number = (Number) object;
-                total += number.doubleValue();
-            } else {
-                Log.w(Log.TAG_VIEW, "Warning non-numeric value found in totalValues: %s", object);
-            }
-        }
-        return total;
-    }
-
     ///////////////////////////////////////////////////////////////////////////
     // For Debugging
     ///////////////////////////////////////////////////////////////////////////
 
     @InterfaceAudience.Private
     protected List<Map<String, Object>> dump() {
-        return viewStorage.dump();
+        return storage.dump();
     }
 }

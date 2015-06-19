@@ -40,7 +40,7 @@ public class QueryRow {
      * In a reduced or grouped query the value will be nil, since the rows don't correspond
      * to individual documents.
      */
-    private String sourceDocumentId;
+    private String sourceDocID;
 
     /**
      * The properties of the document this row was mapped from.
@@ -51,6 +51,7 @@ public class QueryRow {
      */
     private Map<String, Object> documentProperties;
 
+    private QueryRowStorage storage;
 
     private Database database;
 
@@ -60,20 +61,24 @@ public class QueryRow {
      * The database property will be filled in when I'm added to a QueryEnumerator.
      */
     @InterfaceAudience.Private
-    /* package */ QueryRow(String documentId, long sequence, Object key, Object value, Map<String, Object> documentProperties) {
-        this.sourceDocumentId = documentId;
+    protected QueryRow(String docID, long sequence, Object key, Object value, Map<String, Object> documentProperties, QueryRowStorage storage) {
+        // Don't initialize _database yet. I might be instantiated on a background thread (if the
+        // query is async) which has a different CBLDatabase instance than the original caller.
+        // Instead, the database property will be filled in when I'm added to a CBLQueryEnumerator.
+        this.sourceDocID = docID;
         this.sequence = sequence;
         this.key = key;
         this.value = value;
-        this.documentProperties = documentProperties;
+        this.documentProperties = documentProperties; // -> docRevision (RevisionInternal)
+        this.storage = storage;
     }
 
-    /**
-     * Gets the Database that owns the Query's View.
-     */
-    @InterfaceAudience.Public
-    public Database getDatabase() {
+    protected Database getDatabase() {
         return database;
+    }
+
+    protected void setDatabase(Database database) {
+        this.database = database;
     }
 
     /**
@@ -85,11 +90,11 @@ public class QueryRow {
         if (getDocumentId() == null) {
             return null;
         }
+        assert (database != null);
         Document document = database.getDocument(getDocumentId());
         document.loadCurrentRevisionFrom(this);
         return document;
     }
-
 
     /**
      * The row's key: this is the first parameter passed to the emit() call that generated the row.
@@ -121,7 +126,7 @@ public class QueryRow {
             return (String) documentProperties.get("_id");
         }
         else {
-            return sourceDocumentId;
+            return sourceDocID;
         }
     }
 
@@ -135,7 +140,7 @@ public class QueryRow {
      */
     @InterfaceAudience.Public
     public String getSourceDocumentId() {
-        return sourceDocumentId;
+        return sourceDocID;
     }
 
     /**
@@ -187,7 +192,7 @@ public class QueryRow {
      */
     @InterfaceAudience.Public
     public List<SavedRevision> getConflictingRevisions() {
-        Document doc = database.getDocument(sourceDocumentId);
+        Document doc = database.getDocument(sourceDocID);
         Map<String, Object> valueTmp = (Map<String, Object>) value;
         List<String> conflicts = (List<String>) valueTmp.get("_conflicts");
         if (conflicts == null) {
@@ -208,8 +213,7 @@ public class QueryRow {
      * the query result has changed enough to notify the client. So it's important that it
      * not give false positives, else the app won't get notified of changes.
      *
-     * @param o
-     *            the QueryRow to compare this instance with.
+     * @param object the QueryRow to compare this instance with.
      * @return true if equal, false otherwise.
      */
     @Override
@@ -221,22 +225,19 @@ public class QueryRow {
         if (!(object instanceof QueryRow)) {
             return false;
         }
-
-
         QueryRow other = (QueryRow) object;
 
         boolean documentPropertiesEqual = Utils.isEqual(documentProperties, other.getDocumentProperties());
 
         if (database == other.database
                 && Utils.isEqual(key, other.getKey())
-                && Utils.isEqual(sourceDocumentId, other.getSourceDocumentId())
+                && Utils.isEqual(sourceDocID, other.getSourceDocumentId())
                 && documentPropertiesEqual) {
             // If values were emitted, compare them. Otherwise we have nothing to go on so check
             // if _anything_ about the doc has changed (i.e. the sequences are different.)
             if (value != null || other.getValue() != null) {
                 return value.equals(other.getValue());
-            }
-            else {
+            } else {
                 return sequence == other.sequence;
             }
 
@@ -256,23 +257,18 @@ public class QueryRow {
         return asJSONDictionary().toString();
     }
 
-    @InterfaceAudience.Private
-    /* package */ void setDatabase(Database database) {
-        this.database = database;
-    }
-
     /**
      * @exclude
      */
     @InterfaceAudience.Private
     public Map<String, Object> asJSONDictionary() {
         Map<String, Object> result = new HashMap<String, Object>();
-        if (value != null || sourceDocumentId != null) {
+        if (value != null || sourceDocID != null) {
             result.put("key", key);
             if (value != null){
                 result.put("value", value);
             }
-            result.put("id", sourceDocumentId);
+            result.put("id", sourceDocID);
             if (documentProperties != null){
                 result.put("doc", documentProperties);
             }
