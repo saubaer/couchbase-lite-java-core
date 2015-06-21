@@ -1,6 +1,7 @@
 package com.couchbase.lite;
 
 import com.couchbase.lite.internal.InterfaceAudience;
+import com.couchbase.lite.store.QueryRowStore;
 import com.couchbase.lite.util.Utils;
 
 import java.util.ArrayList;
@@ -51,17 +52,17 @@ public class QueryRow {
      */
     private Map<String, Object> documentProperties;
 
-    private QueryRowStorage storage;
+    private QueryRowStore queryRowStore;
 
     private Database database;
 
     /**
      * Constructor
-     *
+     * <p/>
      * The database property will be filled in when I'm added to a QueryEnumerator.
      */
     @InterfaceAudience.Private
-    protected QueryRow(String docID, long sequence, Object key, Object value, Map<String, Object> documentProperties, QueryRowStorage storage) {
+    public QueryRow(String docID, long sequence, Object key, Object value, Map<String, Object> documentProperties, QueryRowStore queryRowStore) {
         // Don't initialize _database yet. I might be instantiated on a background thread (if the
         // query is async) which has a different CBLDatabase instance than the original caller.
         // Instead, the database property will be filled in when I'm added to a CBLQueryEnumerator.
@@ -70,7 +71,7 @@ public class QueryRow {
         this.key = key;
         this.value = value;
         this.documentProperties = documentProperties; // -> docRevision (RevisionInternal)
-        this.storage = storage;
+        this.queryRowStore = queryRowStore;
     }
 
     protected Database getDatabase() {
@@ -80,6 +81,7 @@ public class QueryRow {
     protected void setDatabase(Database database) {
         this.database = database;
     }
+
 
     /**
      * The document this row was mapped from.  This will be nil if a grouping was enabled in
@@ -124,8 +126,7 @@ public class QueryRow {
                 documentProperties.get("_id") != null &&
                 documentProperties.get("_id") instanceof String) {
             return (String) documentProperties.get("_id");
-        }
-        else {
+        } else {
             return sourceDocID;
         }
     }
@@ -185,7 +186,7 @@ public class QueryRow {
     /**
      * Returns all conflicting revisions of the document, or nil if the
      * document is not in conflict.
-     *
+     * <p/>
      * The first object in the array will be the default "winning" revision that shadows the others.
      * This is only valid in an allDocuments query whose allDocsMode is set to Query.AllDocsMode.SHOW_CONFLICTS
      * or Query.AllDocsMode.ONLY_CONFLICTS; otherwise it returns an empty list.
@@ -208,7 +209,7 @@ public class QueryRow {
 
     /**
      * Compare this against the given QueryRow for equality.
-     *
+     * <p/>
      * Implentation Note: This is used implicitly by -[LiveQuery update] to decide whether
      * the query result has changed enough to notify the client. So it's important that it
      * not give false positives, else the app won't get notified of changes.
@@ -240,7 +241,6 @@ public class QueryRow {
             } else {
                 return sequence == other.sequence;
             }
-
         }
         return false;
     }
@@ -265,11 +265,11 @@ public class QueryRow {
         Map<String, Object> result = new HashMap<String, Object>();
         if (value != null || sourceDocID != null) {
             result.put("key", key);
-            if (value != null){
+            if (value != null) {
                 result.put("value", value);
             }
             result.put("id", sourceDocID);
-            if (documentProperties != null){
+            if (documentProperties != null) {
                 result.put("doc", documentProperties);
             }
         } else {
@@ -278,6 +278,4 @@ public class QueryRow {
         }
         return result;
     }
-
-
 }

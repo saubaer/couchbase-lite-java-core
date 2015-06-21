@@ -10,7 +10,7 @@ import java.util.StringTokenizer;
 
 public class MultipartReader {
 
-    private static enum MultipartReaderState {
+    private enum MultipartReaderState {
         kUninitialized,
         kAtStart,
         kInPrologue,

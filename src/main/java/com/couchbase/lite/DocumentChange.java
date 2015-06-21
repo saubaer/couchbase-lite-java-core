@@ -15,7 +15,7 @@ public class DocumentChange {
      * @exclude
      */
     @InterfaceAudience.Private
-    DocumentChange(RevisionInternal addedRevision, RevisionInternal winningRevision, boolean isConflict, URL sourceUrl) {
+    public DocumentChange(RevisionInternal addedRevision, RevisionInternal winningRevision, boolean isConflict, URL sourceUrl) {
         this.addedRevision = addedRevision;
         this.winningRevision = winningRevision;
         this.isConflict = isConflict;

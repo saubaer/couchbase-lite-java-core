@@ -291,7 +291,7 @@ public abstract class Revision {
      * @exclude
      */
     @InterfaceAudience.Private
-    /* package */ static int generationFromRevID(String revID) {
+    public static int generationFromRevID(String revID) {
         int generation = 0;
         int dashPos = revID.indexOf("-");
         if(dashPos > 0) {

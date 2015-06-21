@@ -1,6 +1,5 @@
 package com.couchbase.lite.auth;
 
-import com.couchbase.lite.Database;
 import com.couchbase.lite.util.Log;
 
 import java.net.URL;

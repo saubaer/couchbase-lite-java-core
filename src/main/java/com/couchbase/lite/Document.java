@@ -220,7 +220,7 @@ public class Document {
             return currentRevision;
         }
         EnumSet<Database.TDContentOptions> contentOptions = EnumSet.noneOf(Database.TDContentOptions.class);
-        RevisionInternal revisionInternal = database.getDocumentWithIDAndRev(getId(), id, contentOptions);
+        RevisionInternal revisionInternal = database.getDocument(getId(), id, contentOptions);
         SavedRevision revision = null;
         revision = getRevisionFromRev(revisionInternal);
         return revision;
@@ -384,7 +384,7 @@ public class Document {
     /* package */ List<SavedRevision> getLeafRevisions(boolean includeDeleted) throws CouchbaseLiteException {
 
         List<SavedRevision> result = new ArrayList<SavedRevision>();
-        RevisionList revs = database.getAllRevisionsOfDocumentID(documentId, true);
+        RevisionList revs = database.getAllRevisions(documentId, true);
         for (RevisionInternal rev : revs) {
             // add it to result, unless we are not supposed to include deleted and it's deleted
             if (!includeDeleted && rev.isDeleted()) {
@@ -464,9 +464,9 @@ public class Document {
             return currentRevision;
         }
         return getRevisionFromRev(
-                database.getDocumentWithIDAndRev(getId(),
-                revId,
-                EnumSet.noneOf(Database.TDContentOptions.class))
+                database.getDocument(getId(),
+                        revId,
+                        EnumSet.noneOf(Database.TDContentOptions.class))
         );
     }
 

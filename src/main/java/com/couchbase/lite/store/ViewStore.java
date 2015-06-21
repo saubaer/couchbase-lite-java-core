@@ -6,17 +6,15 @@
 //
 package com.couchbase.lite.store;
 
-import com.couchbase.lite.CouchbaseLiteException;
-import com.couchbase.lite.QueryOptions;
-import com.couchbase.lite.QueryRow;
+import com.couchbase.lite.*;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Storage for a view. Instances are created by Storage implementations, and are owned by View instances.
  */
-public interface ViewStorage {
-
+public interface ViewStore {
     /**
      * The name of the view.
      */
@@ -25,7 +23,9 @@ public interface ViewStorage {
     /**
      * The delegate (in practice, the owning View itself.)
      */
-    ViewStorageDelegate getDelegate();
+    ViewStoreDelegate getDelegate();
+
+    void setDelegate(ViewStoreDelegate delegate);
 
     /**
      * Closes the storage.
@@ -45,7 +45,7 @@ public interface ViewStorage {
     /**
      * Updates the version of the view. A change in version means the delegate's map block has
      * changed its semantics, so the index should be deleted.
-     */
+     * */
     boolean setVersion(String version);
 
     /**
@@ -68,7 +68,8 @@ public interface ViewStorage {
      * @param views views  An array of CBL_ViewStorage instances, always including the receiver.
      * @throws CouchbaseLiteException
      */
-    void updateIndexes(List<ViewStorage> views) throws CouchbaseLiteException;
+    //void updateIndexes(List<ViewStorage> views) throws CouchbaseLiteException;
+    void updateIndex() throws CouchbaseLiteException;
 
     /**
      * Queries the view without performing any reducing or grouping.
@@ -80,5 +81,15 @@ public interface ViewStorage {
      */
     List<QueryRow> reducedQuery(QueryOptions options);
 
-    QueryRowStorage storageForQueryRow(QueryRow row);
+    QueryRowStore storageForQueryRow(QueryRow row);
+
+    /**
+     * Methods for debugging
+     */
+    List<Map<String, Object>> dump();
+
+    // TODO: Not sure if this is required, review latoer
+    int getViewId();
+    List<QueryRow> queryWithOptions(QueryOptions options) throws CouchbaseLiteException;
+    void setCollation(View.TDViewCollation collation);
 }

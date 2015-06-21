@@ -360,8 +360,17 @@ public class Query {
     }
 
     @InterfaceAudience.Public
-    public void setPostFilter(Predicate<QueryRow> postFilter) {
-        this.postFilter = postFilter;
+    public void setPostFilter(final Predicate<QueryRow> pf) {
+
+        this.postFilter = new Predicate<QueryRow>() {
+            @Override
+            public boolean apply(QueryRow type) {
+                type.setDatabase(database);
+                return pf.apply(type);
+            }
+        };
+
+        //this.postFilter = pf;
     }
 
     @InterfaceAudience.Public
@@ -420,8 +429,8 @@ public class Query {
      * A delegate that can be called to signal the completion of a Query.
      */
     @InterfaceAudience.Public
-    public static interface QueryCompleteListener {
-        public void completed(QueryEnumerator rows, Throwable error);
+    public interface QueryCompleteListener {
+        void completed(QueryEnumerator rows, Throwable error);
     }
 
     /**
@@ -497,8 +506,4 @@ public class Query {
             view.delete();
         }
     }
-
-
-
-
 }

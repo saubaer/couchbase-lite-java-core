@@ -18,6 +18,8 @@
 package com.couchbase.lite;
 
 import com.couchbase.lite.internal.InterfaceAudience;
+import com.couchbase.lite.store.ViewStore;
+import com.couchbase.lite.store.ViewStoreDelegate;
 import com.couchbase.lite.util.Log;
 
 import java.util.ArrayList;
@@ -28,7 +30,7 @@ import java.util.Map;
 /**
  * Represents a view available in a database.
  */
-public final class View implements ViewStorageDelegate {
+public final class View implements ViewStoreDelegate {
 
     public enum TDViewCollation {
         TDViewCollationUnicode, TDViewCollationRaw, TDViewCollationASCII
@@ -40,9 +42,7 @@ public final class View implements ViewStorageDelegate {
     private Mapper mapBlock;
     private Reducer reduceBlock;
     private static ViewCompiler compiler;
-    private ViewStorage storage;
-
-    private int viewId;
+    private ViewStore viewStore;
 
     ///////////////////////////////////////////////////////////////////////////
     // Constructor
@@ -52,8 +52,8 @@ public final class View implements ViewStorageDelegate {
     protected View(Database database, String name) {
         this.database = database;
         this.name = name;
-        this.viewId = -1; // means 'unknown'
-        this.storage = new SQLiteViewStorage(name, (SQLiteStorage) database.getStorage(), this, database);
+        this.viewStore = database.getStore().getViewStorage(name, false);
+        this.viewStore.setDelegate(this);
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -141,7 +141,7 @@ public final class View implements ViewStorageDelegate {
         assert (version != null);
         this.mapBlock = mapBlock;
         this.reduceBlock = reduceBlock;
-        return storage.setVersion(version);
+        return viewStore.setVersion(version);
     }
 
     /**
@@ -158,7 +158,7 @@ public final class View implements ViewStorageDelegate {
      */
     @InterfaceAudience.Public
     public boolean isStale() {
-        return (storage.getLastSequenceIndexed() < database.getLastSequenceNumber());
+        return (viewStore.getLastSequenceIndexed() < database.getLastSequenceNumber());
     }
 
     /**
@@ -166,7 +166,7 @@ public final class View implements ViewStorageDelegate {
      */
     @InterfaceAudience.Public
     public long getLastSequenceIndexed() {
-        return storage.getLastSequenceIndexed();
+        return viewStore.getLastSequenceIndexed();
     }
 
     /**
@@ -174,18 +174,21 @@ public final class View implements ViewStorageDelegate {
      */
     @InterfaceAudience.Public
     public void deleteIndex() {
-        storage.deleteIndex();
+        viewStore.deleteIndex();
     }
 
     /**
      * Deletes the view, persistently.
      *
-     * NOTE: It should be - (void) deleteIndex;
+     * NOTE: It should be - (void) deleteView;
      */
     @InterfaceAudience.Public
     public void delete() {
-        database.deleteViewNamed(name);
-        viewId = 0;
+        if(viewStore!=null)
+            viewStore.deleteView();
+        if(database != null && name != null)
+            database.forgetView(name);
+        close();
     }
 
     /**
@@ -193,7 +196,7 @@ public final class View implements ViewStorageDelegate {
      */
     @InterfaceAudience.Public
     public Query createQuery() {
-        return new Query(getDatabase(), this);
+        return new Query(database, this);
     }
 
     /**
@@ -229,49 +232,30 @@ public final class View implements ViewStorageDelegate {
         View.compiler = compiler;
     }
 
-
-
     ///////////////////////////////////////////////////////////////////////////
     // Internal (CBLView+Internal.h)
     ///////////////////////////////////////////////////////////////////////////
 
     @InterfaceAudience.Private
     public int getTotalRows() {
-        return storage.getTotalRows();
+        return viewStore.getTotalRows();
     }
-
-    private ViewStorage getStorage() {
-        return storage;
-    }
-
 
     public void close() {
-        storage.close();
-        storage = null;
+        if(viewStore != null)
+            viewStore.close();
+        viewStore = null;
         database = null;
     }
 
     @InterfaceAudience.Private
     public int getViewId() {
-        return storage.getViewId();
-    }
-
-    @InterfaceAudience.Private
-    public void databaseClosing() {
-        // some tasks could be still in queue of thread, CBLManagerWorkExecutor.
-        // set null to database variable from CBLManagerWorkExecutor.
-        database.getManager().runAsync(new Runnable() {
-            @Override
-            public void run() {
-                database = null;
-                viewId = 0;
-            }
-        });
+        return viewStore.getViewId();
     }
 
     @InterfaceAudience.Private
     public void setCollation(TDViewCollation collation) {
-        storage.setCollation(collation);
+        viewStore.setCollation(collation);
     }
 
     /**
@@ -281,7 +265,7 @@ public final class View implements ViewStorageDelegate {
      */
     @InterfaceAudience.Private
     public void updateIndex() throws CouchbaseLiteException {
-        storage.updateIndex();
+        viewStore.updateIndex();
     }
 
     /**
@@ -291,7 +275,7 @@ public final class View implements ViewStorageDelegate {
      */
     @InterfaceAudience.Private
     public List<QueryRow> queryWithOptions(QueryOptions options) throws CouchbaseLiteException {
-        return storage.queryWithOptions(options);
+        return viewStore.queryWithOptions(options);
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -340,6 +324,6 @@ public final class View implements ViewStorageDelegate {
 
     @InterfaceAudience.Private
     protected List<Map<String, Object>> dump() {
-        return storage.dump();
+        return viewStore.dump();
     }
 }

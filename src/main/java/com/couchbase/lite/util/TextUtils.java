@@ -16,7 +16,6 @@
 
 package com.couchbase.lite.util;
 
-import com.couchbase.lite.Database;
 import com.couchbase.lite.internal.InterfaceAudience;
 
 import org.apache.http.util.ByteArrayBuffer;
@@ -79,7 +78,7 @@ public class TextUtils {
             else {
                 result = result + "','";
             }
-            result = result + Database.quote(string);
+            result = result + quote(string);
         }
         result = result + "'";
 
@@ -96,5 +95,9 @@ public class TextUtils {
             strings.add(object != null ? object.toString() : null);
         }
         return joinQuoted(strings);
+    }
+
+    public static String quote(String string) {
+        return string.replace("'", "''");
     }
 }

@@ -64,7 +64,7 @@ public final class Attachment {
      * Constructor
      */
     @InterfaceAudience.Private
-    /* package */ Attachment(InputStream contentStream, String contentType) {
+    public Attachment(InputStream contentStream, String contentType) {
         this.body = contentStream;
         metadata = new HashMap<String, Object>();
         metadata.put("content_type", contentType);
@@ -166,7 +166,6 @@ public final class Attachment {
             long sequence = getAttachmentSequence();
             if (sequence > 0) {
                 Database db = revision.getDatabase();
-                //Attachment attachment = db.getAttachmentForSequence(sequence, this.name);
                 String path = db.getAttachmentPathForSequence(sequence, this.name);
                 if (path != null) {
                     return new File(path).toURI().toURL();

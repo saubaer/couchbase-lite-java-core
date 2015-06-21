@@ -6,35 +6,31 @@
 //
 package com.couchbase.lite.store;
 
-import com.couchbase.lite.BlobKey;
-import com.couchbase.lite.ChangesOptions;
-import com.couchbase.lite.CouchbaseLiteException;
-import com.couchbase.lite.Manager;
-import com.couchbase.lite.QueryOptions;
-import com.couchbase.lite.QueryRow;
-import com.couchbase.lite.RevisionList;
-import com.couchbase.lite.TransactionalTask;
+import com.couchbase.lite.*;
+import com.couchbase.lite.internal.AttachmentInternal;
 import com.couchbase.lite.internal.RevisionInternal;
+import com.couchbase.lite.storage.SQLiteStorageEngine;
 
 import java.net.URL;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Abstraction of database storage. Every Database has an instance of this,
  * and acts as that instance's delegate.
  */
-public interface Storage {
+public interface Store {
 
-    /////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
     // INITIALIZATION AND CONFIGURATION:
-    /////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
 
     /**
      * Preflight to see if a database file exists in this directory. Called _before_ open() method!
      */
-    boolean databaseExists(String directory);
+    //boolean databaseExists(String directory);
 
     /**
      * Opens storage. Files will be created in the directory, which must already exist.
@@ -48,7 +44,8 @@ public interface Storage {
      *                  properties.
      * @return true on success, false on failure.
      */
-    boolean open(String directory, boolean readOnly, Manager manager);
+    //boolean open(String directory, boolean readOnly, Manager manager);
+    boolean open();
 
     /**
      * Closes storage before it's deallocated.
@@ -58,29 +55,28 @@ public interface Storage {
     /**
      * The delegate object, which in practice is the CBLDatabase.
      */
-    void setDelegate(StorageDelegate delegate);
+    void setDelegate(StoreDelegate delegate);
 
-    StorageDelegate getDelegate();
+    StoreDelegate getDelegate();
 
     /**
      * The maximum depth a document's revision tree should grow to; beyond that,
      * it should be pruned. This will be set soon after the -openInDirectory call.
      */
-    void setMaxRevTreeDepth(int value);
-
+    void setMaxRevTreeDepth(int maxRevTreeDepth);
     int getMaxRevTreeDepth();
 
     /**
      * Whether the database storage should automatically (periodically) be compacted.
      * This will be set soon after the open() method call.
      */
-    void setAutoCompact(boolean value);
+    //void setAutoCompact(boolean value);
 
-    boolean getAutoCompact();
+    //boolean getAutoCompact();
 
-    /////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
     // DATABASE ATTRIBUTES & OPERATIONS:
-    /////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
 
     /**
      * Stores an arbitrary string under an arbitrary key, persistently.
@@ -95,7 +91,7 @@ public interface Storage {
     /**
      * The number of (undeleted) documents in the database.
      */
-    long getDocumentCount();
+    int getDocumentCount();
 
     /**
      * The last sequence number allocated to a revision.
@@ -110,7 +106,7 @@ public interface Storage {
     /**
      * Explicitly compacts document storage.
      */
-    boolean compact() throws CouchbaseLiteException;
+    void compact() throws CouchbaseLiteException;
 
     /**
      * Executes the block within a database transaction.
@@ -119,11 +115,11 @@ public interface Storage {
      * if 10 retries all fail, the kCBLStatusDBBusy will be returned to the caller.
      * Any exception raised by the block will be caught and treated as kCBLStatusException.
      */
-    boolean runInTransaction(TransactionalTask block);
+    boolean runInTransaction(TransactionalTask task);
 
-    /////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
     // DOCUMENTS:
-    /////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
 
     /**
      * Retrieves a document revision by ID.
@@ -134,22 +130,27 @@ public interface Storage {
      * @return The revision, or nil if not found.
      * @throws CouchbaseLiteException
      */
-    RevisionInternal getDocument(String docID, String revID, boolean withBody)
-            throws CouchbaseLiteException;
+    //RevisionInternal getDocument(String docID, String revID, boolean withBody) throws CouchbaseLiteException;
+    RevisionInternal getDocument(String docID,
+                                 String revID,
+                                 EnumSet<Database.TDContentOptions> contentOptions);
 
     /**
      * Loads the body of a revision.
      * On entry, rev.docID and rev.revID will be valid.
      * On success, rev.body and rev.sequence will be valid.
      */
-    RevisionInternal loadRevisionBody(RevisionInternal rev) throws CouchbaseLiteException;
+    //RevisionInternal loadRevisionBody(RevisionInternal rev) throws CouchbaseLiteException;
+    RevisionInternal loadRevisionBody(RevisionInternal rev,
+                                      EnumSet<Database.TDContentOptions> contentOptions)
+            throws CouchbaseLiteException;
 
     /**
      * Looks up the sequence number of a revision.
      * Will only be called on revisions whose .sequence property is not already set.
      * Does not need to set the revision's .sequence property; the caller will take care of that.
      */
-    long getRevisionSequence(RevisionInternal rev);
+    //long getRevisionSequence(RevisionInternal rev);
 
     /**
      * Retrieves the parent revision of a revision, or returns nil if there is no parent.
@@ -168,7 +169,7 @@ public interface Storage {
      * the revision history will only go back as far as any of the revision ID strings
      * in that array.
      */
-    Map<String, Object> getRevisionHistoryDict(RevisionInternal rev);
+    //Map<String, Object> getRevisionHistoryDict(RevisionInternal rev);
 
     /**
      * Returns all the known revisions (or all current/conflicting revisions) of a document.
@@ -186,7 +187,7 @@ public interface Storage {
      */
     List<String> getPossibleAncestorRevisionIDs(RevisionInternal rev,
                                                 int limit,
-                                                boolean onlyAttachments);
+                                                AtomicBoolean onlyAttachments);
 
     /**
      * Returns the most recent member of revIDs that appears in rev's ancestry.
@@ -196,24 +197,27 @@ public interface Storage {
      */
     String findCommonAncestor(RevisionInternal rev, List<String> revIDs);
 
+
     /**
      * Looks for each given revision in the local database, and removes each one found
      * from the list. On return, therefore,
      * `revs` will contain only the revisions that don't exist locally.
      */
-    boolean findMissingRevisions(RevisionList touchRevs) throws CouchbaseLiteException;
+    //boolean findMissingRevisions(RevisionList touchRevs) throws CouchbaseLiteException;
+    int findMissingRevisions(RevisionList touchRevs);
 
     /**
      * Returns the keys (unique IDs) of all attachments referred to by existing un-compacted
      * Each revision key is an NSData object containing a CBLBlobKey (raw SHA-1 digest) derived from
      * the "digest" property of the attachment's metadata.
      */
-    Set<BlobKey> findAllAttachmentKeys() throws CouchbaseLiteException;
+    //Set<BlobKey> findAllAttachmentKeys() throws CouchbaseLiteException;
 
     /**
      * Iterates over all documents in the database, according to the given query options.
      */
-    List<QueryRow> getAllDocs(QueryOptions options) throws CouchbaseLiteException;
+    //List<QueryRow> getAllDocs(QueryOptions options) throws CouchbaseLiteException;
+    Map<String,Object> getAllDocs(QueryOptions options) throws CouchbaseLiteException;
 
     /**
      * Returns all database changes with sequences greater than `lastSequence`.
@@ -224,12 +228,16 @@ public interface Storage {
      *                     and those for which it returns NO will be skipped.
      * @return The list of CBL_Revisions
      */
-    RevisionList changesSince(long lastSequence, ChangesOptions options, RevisionFilter filter)
-            throws CouchbaseLiteException;
+    //RevisionList changesSince(long lastSequence, ChangesOptions options, RevisionFilter filter) throws CouchbaseLiteException;
+    RevisionList changesSince(long lastSequence,
+                              ChangesOptions options,
+                              ReplicationFilter filter,
+                              Map<String, Object> filterParams);
 
-    /////////////////////////////////////////////
+
+    ///////////////////////////////////////////////////////////////////////////
     // INSERTION / DELETION:
-    /////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
 
     /**
      * Creates a new revision of a document.
@@ -247,6 +255,7 @@ public interface Storage {
      *                        the operation by returning an error status.
      * @return The new revision, with its revID and sequence filled in, or nil on error.
      */
+    /*
     RevisionInternal add(String docID,
                          String prevRevID,
                          Map<String, Object> properties,
@@ -254,7 +263,12 @@ public interface Storage {
                          boolean allowConflict,
                          StorageValidation validationBlock)
             throws CouchbaseLiteException;
-
+        */
+    RevisionInternal putRevision(RevisionInternal oldRev,
+                                 String prevRevId,
+                                 boolean allowConflict,
+                                 Status resultStatus)
+            throws CouchbaseLiteException;
 
     /**
      * Inserts an already-existing revision (with its revID), plus its ancestry, into a document.
@@ -272,11 +286,16 @@ public interface Storage {
      *                        (This will be used to create the CBLDatabaseChange object sent to the delegate.)
      * @throws CouchbaseLiteException
      */
+    /*
     void forceInsert(RevisionInternal inRev,
                      List<String> history,
                      StorageValidation validationBlock,
                      URL source)
             throws CouchbaseLiteException;
+    */
+    void forceInsert(RevisionInternal inRev, List<String> history, URL source)
+            throws CouchbaseLiteException;
+
 
     /**
      * Purges specific revisions, which deletes them completely from the local database
@@ -289,12 +308,11 @@ public interface Storage {
      * containing the doc/revision IDs that were actually removed.
      * @throws CouchbaseLiteException
      */
-    Map<String, Object> purgeRevisions(Map<String, List<String>> docsToRevs)
-            throws CouchbaseLiteException;
+    Map<String, Object> purgeRevisions(final Map<String, List<String>> docsToRevs);
 
-    /////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
     // VIEWS:
-    /////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
 
     /**
      * Instantiates storage for a view.
@@ -303,16 +321,16 @@ public interface Storage {
      * @param create If YES, the view should be created; otherwise it must already exist
      * @return Storage for the view, or nil if create=NO and it doesn't exist.
      */
-    ViewStorage getViewStorage(String name, boolean create);
+    ViewStore getViewStorage(String name, boolean create);
 
     /**
      * Returns the names of all existing views in the database.
      */
     List<String> getAllViewNames();
 
-    /////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
     // LOCAL DOCS:
-    /////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////
 
     /**
      * Returns the contents of a local document. Note that local documents do not have revision
@@ -336,6 +354,43 @@ public interface Storage {
      * @return The new revision, with revID filled in, or nil on error.
      * @throws CouchbaseLiteException
      */
-    RevisionInternal putLocalRevision(RevisionInternal revision, String prevRevID, boolean obeyMVCC)
+    //RevisionInternal putLocalRevision(RevisionInternal revision, String prevRevID, boolean obeyMVCC) throws CouchbaseLiteException;
+    RevisionInternal putLocalRevision(RevisionInternal revision, String prevRevID) throws CouchbaseLiteException;
+
+    ///////////////////////////////////////////////////////////////////////////
+    // temporary from here
+    ///////////////////////////////////////////////////////////////////////////
+
+    SQLiteStorageEngine getStorageEngine();
+    boolean beginTransaction();
+    boolean endTransaction(boolean commit);
+    void optimizeSQLIndexes();
+    String publicUUID();
+    String privateUUID();
+    Map<String, Object> getAttachmentsDictForSequenceWithContent(long sequence, EnumSet<Database.TDContentOptions> contentOptions);
+    RevisionList getAllRevisions(String docId, long docNumericID, boolean onlyCurrent);
+    long getDocNumericID(String docId);
+    Status garbageCollectAttachments();
+    String winningRevIDOfDoc(long docNumericId, AtomicBoolean outIsDeleted, AtomicBoolean outIsConflict) throws CouchbaseLiteException;
+    boolean existsDocumentWithIDAndRev(String docId, String revId);
+    void copyAttachmentNamedFromSequenceToSequence(String name, long fromSeq, long toSeq) throws CouchbaseLiteException;
+    String lastSequenceWithCheckpointId(String checkpointId);
+    void deleteLocalDocument(String docID, String revID) throws CouchbaseLiteException;
+    boolean replaceUUIDs();
+    Map<String, Object> documentPropertiesFromJSON(byte[] json, String docId, String revId, boolean deleted, long sequence, EnumSet<Database.TDContentOptions> contentOptions);
+    Attachment getAttachmentForSequence(long sequence, String filename) throws CouchbaseLiteException;
+    String getAttachmentPathForSequence(long sequence, String filename) throws CouchbaseLiteException;
+    boolean setLastSequence(String lastSequence, String checkpointId, boolean push);
+
+    /**
+     * Returns IDs of local revisions of the same document, that have a lower generation number.
+     * Does not return revisions whose bodies have been compacted away, or deletion markers.
+     * If 'onlyAttachments' is true, only revisions with attachments will be returned.
+     */
+    void insertAttachmentForSequenceWithNameAndType(long sequence, String name, String contentType,
+                                                    int revpos, BlobKey key, long length,
+                                                    AttachmentInternal.AttachmentEncoding encoding,
+                                                    long encodedLength)
             throws CouchbaseLiteException;
+
 }

@@ -1,7 +1,6 @@
 package com.couchbase.lite.router;
 
 
-import com.couchbase.lite.Database;
 import com.couchbase.lite.internal.Body;
 import com.couchbase.lite.util.Log;
 

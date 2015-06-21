@@ -4,13 +4,9 @@ import com.couchbase.lite.Database;
 import com.couchbase.lite.Manager;
 import com.couchbase.lite.util.Log;
 
-import java.lang.ref.ReferenceQueue;
-import java.lang.ref.WeakReference;
 import java.util.AbstractMap;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 

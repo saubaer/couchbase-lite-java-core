@@ -1,6 +1,5 @@
 package com.couchbase.lite.router;
 
-
 import com.couchbase.lite.AsyncTask;
 import com.couchbase.lite.Attachment;
 import com.couchbase.lite.BlobStoreWriter;
@@ -60,7 +59,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-
 public class Router implements Database.ChangeListener, Database.DatabaseListener {
 
     private Manager manager;
@@ -88,7 +86,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         this.callbackBlock = callbackBlock;
     }
 
-    public Map<String, String> getQueries() {
+    private Map<String, String> getQueries() {
         if (queries == null) {
             String queryString = connection.getURL().getQuery();
             if (queryString != null && queryString.length() > 0) {
@@ -101,13 +99,12 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                         queries.put(key, value);
                     }
                 }
-
             }
         }
         return queries;
     }
 
-    public boolean getBooleanValueFromBody(String paramName, Map<String, Object> bodyDict, boolean defaultVal) {
+    private boolean getBooleanValueFromBody(String paramName, Map<String, Object> bodyDict, boolean defaultVal) {
         boolean value = defaultVal;
         if (bodyDict.containsKey(paramName)) {
             value = Boolean.TRUE.equals(bodyDict.get(paramName));
@@ -115,7 +112,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return value;
     }
 
-    public String getQuery(String param) {
+    private String getQuery(String param) {
         Map<String, String> queries = getQueries();
         if (queries != null) {
             String value = queries.get(param);
@@ -126,12 +123,12 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return null;
     }
 
-    public boolean getBooleanQuery(String param) {
+    private boolean getBooleanQuery(String param) {
         String value = getQuery(param);
         return (value != null) && !"false".equals(value) && !"0".equals(value);
     }
 
-    public int getIntQuery(String param, int defaultValue) {
+    private int getIntQuery(String param, int defaultValue) {
         int result = defaultValue;
         String value = getQuery(param);
         if (value != null) {
@@ -145,7 +142,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return result;
     }
 
-    public Object getJSONQuery(String param) {
+    private Object getJSONQuery(String param) {
         String value = getQuery(param);
         if (value == null) {
             return null;
@@ -159,14 +156,14 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return result;
     }
 
-    public boolean cacheWithEtag(String etag) {
+    private boolean cacheWithEtag(String etag) {
         String eTag = String.format("\"%s\"", etag);
         connection.getResHeader().add("Etag", eTag);
         String requestIfNoneMatch = connection.getRequestProperty("If-None-Match");
         return eTag.equals(requestIfNoneMatch);
     }
 
-    public Map<String, Object> getBodyAsDictionary() {
+    private Map<String, Object> getBodyAsDictionary() {
         try {
             InputStream contentStream = connection.getRequestInputStream();
             Map<String, Object> bodyMap = Manager.getObjectMapper().readValue(contentStream, Map.class);
@@ -177,7 +174,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         }
     }
 
-    public EnumSet<TDContentOptions> getContentOptions() {
+    private EnumSet<TDContentOptions> getContentOptions() {
         EnumSet<TDContentOptions> result = EnumSet.noneOf(TDContentOptions.class);
         if (getBooleanQuery("attachments")) {
             result.add(TDContentOptions.TDIncludeAttachments);
@@ -197,7 +194,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return result;
     }
 
-    public boolean getQueryOptions(QueryOptions options) {
+    private boolean getQueryOptions(QueryOptions options) {
         // http://wiki.apache.org/couchdb/HTTP_view_API#Querying_Options
         options.setSkip(getIntQuery("skip", options.getSkip()));
         options.setLimit(getIntQuery("limit", options.getLimit()));
@@ -247,7 +244,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return true;
     }
 
-    public String getMultipartRequestType() {
+    private String getMultipartRequestType() {
         String accept = connection.getRequestProperty("Accept");
         if (accept.startsWith("multipart/")) {
             return accept;
@@ -255,7 +252,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return null;
     }
 
-    public Status openDB() {
+    private Status openDB() {
         if (db == null) {
             return new Status(Status.INTERNAL_SERVER_ERROR);
         }
@@ -268,7 +265,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return new Status(Status.OK);
     }
 
-    public static List<String> splitPath(URL url) {
+    private static List<String> splitPath(URL url) {
         String pathString = url.getPath();
         if (pathString.startsWith("/")) {
             pathString = pathString.substring(1);
@@ -284,7 +281,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return result;
     }
 
-    public void sendResponse() {
+    private void sendResponse() {
         if (!responseSent) {
             responseSent = true;
             if (callbackBlock != null) {
@@ -618,7 +615,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
      * *********************************************************************************************
      */
 
-    public void setResponseLocation(URL url) {
+    private void setResponseLocation(URL url) {
         String location = url.getPath();
         String query = url.getQuery();
         if (query != null) {
@@ -929,7 +926,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
      * TODO: CBL iOS supports EventSourceFeed in addition to longpoll and continuous.
      * TODO: Need to catch up CBL iOS: - (void) sendContinuousLine: (NSDictionary*)changeDict in CBL_Router+Handlers.m
      */
-    public void sendContinuousReplicationChanges(Map<String, Object> activity) {
+    private void sendContinuousReplicationChanges(Map<String, Object> activity) {
         try {
             String jsonString = Manager.getObjectMapper().writeValueAsString(activity);
             if (callbackBlock != null) {
@@ -1090,16 +1087,12 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
             result.put("ok", "registered");
             connection.setResponseBody(new Body(result));
             return new Status(Status.OK);
-
-
         } else {
             Map<String, Object> result = new HashMap<String, Object>();
             result.put("error", "required fields: access_token, email, remote_url");
             connection.setResponseBody(new Body(result));
             return new Status(Status.BAD_REQUEST);
         }
-
-
     }
 
     public Status do_POST_persona_assertion(Database _db, String _docID, String _attachmentName) {
@@ -1333,7 +1326,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
      * CHANGES: *
      */
 
-    public Map<String, Object> changesDictForRevision(RevisionInternal rev) {
+    private Map<String, Object> changesDictForRevision(RevisionInternal rev) {
         Map<String, Object> changesDict = new HashMap<String, Object>();
         changesDict.put("rev", rev.getRevId());
 
@@ -1353,7 +1346,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return result;
     }
 
-    public Map<String, Object> responseBodyForChanges(List<RevisionInternal> changes, long since) {
+    private Map<String, Object> responseBodyForChanges(List<RevisionInternal> changes, long since) {
         List<Map<String, Object>> results = new ArrayList<Map<String, Object>>();
         for (RevisionInternal rev : changes) {
             Map<String, Object> changeDict = changesDictForRevision(rev);
@@ -1368,7 +1361,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return result;
     }
 
-    public Map<String, Object> responseBodyForChangesWithConflicts(List<RevisionInternal> changes, long since) {
+    private Map<String, Object> responseBodyForChangesWithConflicts(List<RevisionInternal> changes, long since) {
         // Assumes the changes are grouped by docID so that conflicts will be adjacent.
         List<Map<String, Object>> entries = new ArrayList<Map<String, Object>>();
         String lastDocID = null;
@@ -1409,7 +1402,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return result;
     }
 
-    public void sendContinuousChange(RevisionInternal rev) {
+    private void sendContinuousChange(RevisionInternal rev) {
         Map<String, Object> changeDict = changesDictForRevision(rev);
         try {
             String jsonString = Manager.getObjectMapper().writeValueAsString(changeDict);
@@ -1428,6 +1421,9 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         }
     }
 
+    /**
+     * Implementation of ChangeListener
+     */
     @Override
     public void changed(Database.ChangeEvent event) {
 
@@ -1530,7 +1526,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
      * DOCUMENT REQUESTS: *
      */
 
-    public String getRevIDFromIfMatchHeader() {
+    private String getRevIDFromIfMatchHeader() {
         String ifMatch = connection.getRequestProperty("If-Match");
         if (ifMatch == null) {
             return null;
@@ -1541,12 +1537,6 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         } else {
             return null;
         }
-    }
-
-    public String setResponseEtag(RevisionInternal rev) {
-        String eTag = String.format("\"%s\"", rev.getRevId());
-        connection.getResHeader().add("Etag", eTag);
-        return eTag;
     }
 
     public Status do_GET_Document(Database _db, String docID, String _attachmentName) {
@@ -1562,7 +1552,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                 if (isLocalDoc) {
                     rev = db.getLocalDocument(docID, revID);
                 } else {
-                    rev = db.getDocumentWithIDAndRev(docID, revID, options);
+                    rev = db.getDocument(docID, revID, options);
                     // Handle ?atts_since query by stubbing out older attachments:
                     //?atts_since parameter - value is a (URL-encoded) JSON array of one or more revision IDs.
                     // The response will include the content of only those attachments that changed since the given revision(s).
@@ -1588,7 +1578,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                 List<Map<String, Object>> result = null;
                 if (openRevsParam.equals("all")) {
                     // Get all conflicting revisions:
-                    RevisionList allRevs = db.getAllRevisionsOfDocumentID(docID, true);
+                    RevisionList allRevs = db.getAllRevisions(docID, true);
                     result = new ArrayList<Map<String, Object>>(allRevs.size());
                     for (RevisionInternal rev : allRevs) {
 
@@ -1617,7 +1607,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                     }
                     result = new ArrayList<Map<String, Object>>(openRevs.size());
                     for (String revID : openRevs) {
-                        RevisionInternal rev = db.getDocumentWithIDAndRev(docID, revID, options);
+                        RevisionInternal rev = db.getDocument(docID, revID, options);
                         if (rev != null) {
                             Map<String, Object> dict = new HashMap<String, Object>();
                             dict.put("ok", rev.getProperties());
@@ -1649,7 +1639,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
             EnumSet<TDContentOptions> options = getContentOptions();
             options.add(TDContentOptions.TDNoBody);
             String revID = getQuery("rev");  // often null
-            RevisionInternal rev = db.getDocumentWithIDAndRev(docID, revID, options);
+            RevisionInternal rev = db.getDocument(docID, revID, options);
             if (rev == null) {
                 return new Status(Status.NOT_FOUND);
             }
@@ -1683,7 +1673,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
     /**
      * NOTE this departs from the iOS version, returning revision, passing status back by reference
      */
-    public RevisionInternal update(Database _db, String docID, Body body, boolean deleting, boolean allowConflict, Status outStatus) {
+    private RevisionInternal update(Database _db, String docID, Body body, boolean deleting, boolean allowConflict, Status outStatus) {
 
         assert body != null;
 
@@ -1745,7 +1735,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return result;
     }
 
-    public Status update(Database _db, String docID, Map<String, Object> bodyDict, boolean deleting) {
+    private Status update(Database _db, String docID, Map<String, Object> bodyDict, boolean deleting) {
         Body body = new Body(bodyDict);
         Status status = new Status();
 
@@ -1817,7 +1807,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return update(_db, docID, null, true);
     }
 
-    public Status updateAttachment(String attachment, String docID, InputStream contentStream) throws CouchbaseLiteException {
+    private Status updateAttachment(String attachment, String docID, InputStream contentStream) throws CouchbaseLiteException {
         Status status = new Status(Status.OK);
         String revID = getQuery("rev");
         if (revID == null) {
@@ -1860,7 +1850,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
     /**
      * VIEW QUERIES: *
      */
-    public View compileView(String viewName, Map<String, Object> viewProps) {
+    private View compileView(String viewName, Map<String, Object> viewProps) {
         String language = (String) viewProps.get("language");
         if (language == null) {
             language = "javascript";
@@ -1893,13 +1883,13 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return view;
     }
 
-    public Status queryDesignDoc(String designDoc, String viewName, List<Object> keys) throws CouchbaseLiteException {
+    private Status queryDesignDoc(String designDoc, String viewName, List<Object> keys) throws CouchbaseLiteException {
         String tdViewName = String.format("%s/%s", designDoc, viewName);
         View view = db.getExistingView(tdViewName);
         if (view == null || view.getMap() == null) {
             // No TouchDB view is defined, or it hasn't had a map block assigned;
             // see if there's a CouchDB view definition we can compile:
-            RevisionInternal rev = db.getDocumentWithIDAndRev(String.format("_design/%s", designDoc), null, EnumSet.noneOf(TDContentOptions.class));
+            RevisionInternal rev = db.getDocument(String.format("_design/%s", designDoc), null, EnumSet.noneOf(TDContentOptions.class));
             if (rev == null) {
                 return new Status(Status.NOT_FOUND);
             }

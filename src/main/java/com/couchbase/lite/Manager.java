@@ -41,24 +41,10 @@ import java.util.regex.Pattern;
  */
 public final class Manager {
 
-    /**
-     * @exclude
-     */
-    public static final String HTTP_ERROR_DOMAIN = "CBLHTTP";
 
-    /**
-     * @exclude
-     */
-    public static final String DATABASE_SUFFIX_OLD = ".touchdb";
-
-    /**
-     * @exclude
-     */
-    public static final String DATABASE_SUFFIX = ".cblite";
-
-    /**
-     * @exclude
-     */
+    protected static final String HTTP_ERROR_DOMAIN = "CBLHTTP";
+    protected static final String DATABASE_SUFFIX_OLD = ".touchdb";
+    protected static final String DATABASE_SUFFIX = ".cblite";
     public static final ManagerOptions DEFAULT_OPTIONS = new ManagerOptions();
 
     /**
@@ -78,7 +64,6 @@ public final class Manager {
     private ScheduledExecutorService workExecutor;
     private HttpClientFactory defaultHttpClientFactory;
     private Context context;
-
 
     /**
      * @exclude
@@ -284,7 +269,7 @@ public final class Manager {
 
     private void replaceDatabase(String databaseName, InputStream databaseStream, Iterator<Map.Entry<String, InputStream>> attachmentStreams) throws CouchbaseLiteException {
         try {
-            //Database database = getDatabase(databaseName);
+            //Database database = getStorageEngine(databaseName);
             Database database = getDatabaseWithoutOpening(databaseName, false);
             String dstAttachmentsPath = database.getAttachmentStorePath();
             OutputStream destStream = new FileOutputStream(new File(database.getPath()));
@@ -454,37 +439,6 @@ public final class Manager {
      * @exclude
      */
     @InterfaceAudience.Private
-    Replication replicationWithDatabase(Database db, URL remote, boolean push, boolean create, boolean start) {
-        for (Replication replicator : replications) {
-            if (replicator.getLocalDatabase() == db && replicator.getRemoteUrl().equals(remote) && replicator.isPull() == !push) {
-                return replicator;
-            }
-        }
-        if (!create) {
-            return null;
-        }
-
-        Replication replicator = null;
-        final boolean continuous = false;
-
-        if (push) {
-            replicator = new Replication(db, remote, Replication.Direction.PUSH, null, getWorkExecutor());
-        } else {
-            replicator = new Replication(db, remote, Replication.Direction.PULL, null, getWorkExecutor());
-        }
-
-        replications.add(replicator);
-        if (start) {
-            replicator.start();
-        }
-
-        return replicator;
-    }
-
-    /**
-     * @exclude
-     */
-    @InterfaceAudience.Private
     public synchronized Database getDatabaseWithoutOpening(String name, boolean mustExist) {
         Database db = databases.get(name);
         if (db == null) {
@@ -513,7 +467,7 @@ public final class Manager {
      * @exclude
      */
     @InterfaceAudience.Private
-    /* package */ void forgetDatabase(Database db) {
+    protected void forgetDatabase(Database db) {
 
         // remove from cached list of dbs
         databases.remove(db.getName());

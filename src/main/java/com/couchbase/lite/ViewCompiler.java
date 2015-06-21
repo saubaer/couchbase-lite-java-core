@@ -6,7 +6,6 @@ import com.couchbase.lite.internal.InterfaceAudience;
  * An external object that knows how to map source code of some sort into executable functions.
  */
 public interface ViewCompiler {
-
     /**
      * Compiles source code into a MapDelegate.
      *
@@ -26,5 +25,4 @@ public interface ViewCompiler {
      */
     @InterfaceAudience.Public
     Reducer compileReduce(String source, String language);
-
 }
