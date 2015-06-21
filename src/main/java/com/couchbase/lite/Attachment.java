@@ -76,7 +76,7 @@ public final class Attachment {
      * Constructor
      */
     @InterfaceAudience.Private
-    /* package */ Attachment(Revision revision, String name, Map<String, Object> metadata) {
+    protected Attachment(Revision revision, String name, Map<String, Object> metadata) {
         this.revision = revision;
         this.name = name;
         this.metadata = metadata;
@@ -200,17 +200,17 @@ public final class Attachment {
     }
 
     @InterfaceAudience.Private
-    /* package */ void setName(String name) {
+    protected void setName(String name) {
         this.name = name;
     }
 
     @InterfaceAudience.Private
-    /* package */ void setRevision(Revision revision) {
+    protected void setRevision(Revision revision) {
         this.revision = revision;
     }
 
     @InterfaceAudience.Private
-    /* package */ InputStream getBodyIfNew() {
+    protected InputStream getBodyIfNew() {
         return body;
     }
 
@@ -220,7 +220,7 @@ public final class Attachment {
      * the metadata 'digest' and 'follows' properties accordingly.
      */
     @InterfaceAudience.Private
-    /* package */ static Map<String, Object> installAttachmentBodies(Map<String, Object> attachments, Database database) throws CouchbaseLiteException {
+    protected static Map<String, Object> installAttachmentBodies(Map<String, Object> attachments, Database database) throws CouchbaseLiteException {
 
         Map<String, Object> updatedAttachments = new HashMap<String, Object>();
         for (String name : attachments.keySet()) {
@@ -256,7 +256,7 @@ public final class Attachment {
     }
 
     @InterfaceAudience.Private
-    /* package */ static BlobStoreWriter blobStoreWriterForBody(InputStream body, Database database) throws IOException {
+    protected static BlobStoreWriter blobStoreWriterForBody(InputStream body, Database database) throws IOException {
         BlobStoreWriter writer = database.getAttachmentWriter();
         try {
             writer.read(body);
@@ -271,8 +271,6 @@ public final class Attachment {
     /**
      * NOTE: getGZipped() can return correct value if Attachment is returned from Database.getAttachmentForSequence(long, String).
      *       This method should be internal use only.
-     *
-     * @exclude
      */
     @InterfaceAudience.Private
     public boolean getGZipped() {

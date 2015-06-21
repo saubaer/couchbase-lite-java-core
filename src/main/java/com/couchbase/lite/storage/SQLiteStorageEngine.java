@@ -17,9 +17,9 @@
 package com.couchbase.lite.storage;
 
 public interface SQLiteStorageEngine {
-    public static final int CONFLICT_NONE = 0;
-    public static final int CONFLICT_IGNORE = 4;
-    public static final int CONFLICT_REPLACE = 5;
+    int CONFLICT_NONE = 0;
+    int CONFLICT_IGNORE = 4;
+    int CONFLICT_REPLACE = 5;
 
     boolean open(String path);
     int getVersion();

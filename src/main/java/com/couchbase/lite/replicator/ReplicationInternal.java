@@ -731,12 +731,11 @@ abstract class ReplicationInternal implements BlockingQueueListener{
                         remoteCheckpoint = body;
                         if (db != null && db.open()) {
                             Log.d(Log.TAG_SYNC, "%s: saved remote checkpoint, updating local checkpoint.  remoteCheckpoint: %s", this, remoteCheckpoint);
-                            db.setLastSequence(lastSequence, checkpointID, !isPull());
+                            db.setLastSequence(lastSequence, checkpointID);
                         } else {
                             Log.w(Log.TAG_SYNC, "%s: Database is null or closed, not calling db.setLastSequence() ", this);
                         }
                     }
-
                 } finally {
 
                     savingCheckpoint = false;
@@ -746,9 +745,7 @@ abstract class ReplicationInternal implements BlockingQueueListener{
                         overdueForCheckpointSave = false;
                         saveLastSequence();
                     }
-
                 }
-
             }
         });
         pendingFutures.add(future);
@@ -1492,7 +1489,7 @@ abstract class ReplicationInternal implements BlockingQueueListener{
             if (!db.isOpen()) {
                 Log.w(Log.TAG_SYNC, "Not attempting to setLastSequence, db is closed");
             } else {
-                db.setLastSequence(lastSequence, remoteCheckpointDocID(), !isPull());
+                db.setLastSequence(lastSequence, remoteCheckpointDocID());
             }
             Log.v(Log.TAG_SYNC, "%s: clearDbRef() setting db to null", this);
             db = null;
@@ -1500,9 +1497,7 @@ abstract class ReplicationInternal implements BlockingQueueListener{
         } catch (Exception e) {
             Log.e(Log.TAG_SYNC, "Exception in clearDbRef(): %s", e);
         }
-
     }
-
 
     /**
      * For java docs, see Replication.setCookie()

@@ -6,7 +6,16 @@
 //
 package com.couchbase.lite.store;
 
-import com.couchbase.lite.*;
+import com.couchbase.lite.Attachment;
+import com.couchbase.lite.BlobKey;
+import com.couchbase.lite.ChangesOptions;
+import com.couchbase.lite.CouchbaseLiteException;
+import com.couchbase.lite.Database;
+import com.couchbase.lite.QueryOptions;
+import com.couchbase.lite.ReplicationFilter;
+import com.couchbase.lite.RevisionList;
+import com.couchbase.lite.Status;
+import com.couchbase.lite.TransactionalTask;
 import com.couchbase.lite.internal.AttachmentInternal;
 import com.couchbase.lite.internal.RevisionInternal;
 import com.couchbase.lite.storage.SQLiteStorageEngine;
@@ -15,6 +24,7 @@ import java.net.URL;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -211,7 +221,7 @@ public interface Store {
      * Each revision key is an NSData object containing a CBLBlobKey (raw SHA-1 digest) derived from
      * the "digest" property of the attachment's metadata.
      */
-    //Set<BlobKey> findAllAttachmentKeys() throws CouchbaseLiteException;
+    Set<BlobKey> findAllAttachmentKeys() throws CouchbaseLiteException;
 
     /**
      * Iterates over all documents in the database, according to the given query options.
@@ -374,13 +384,11 @@ public interface Store {
     String winningRevIDOfDoc(long docNumericId, AtomicBoolean outIsDeleted, AtomicBoolean outIsConflict) throws CouchbaseLiteException;
     boolean existsDocumentWithIDAndRev(String docId, String revId);
     void copyAttachmentNamedFromSequenceToSequence(String name, long fromSeq, long toSeq) throws CouchbaseLiteException;
-    String lastSequenceWithCheckpointId(String checkpointId);
     void deleteLocalDocument(String docID, String revID) throws CouchbaseLiteException;
     boolean replaceUUIDs();
     Map<String, Object> documentPropertiesFromJSON(byte[] json, String docId, String revId, boolean deleted, long sequence, EnumSet<Database.TDContentOptions> contentOptions);
     Attachment getAttachmentForSequence(long sequence, String filename) throws CouchbaseLiteException;
     String getAttachmentPathForSequence(long sequence, String filename) throws CouchbaseLiteException;
-    boolean setLastSequence(String lastSequence, String checkpointId, boolean push);
 
     /**
      * Returns IDs of local revisions of the same document, that have a lower generation number.

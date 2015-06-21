@@ -250,7 +250,7 @@ public final class View implements ViewStoreDelegate {
 
     @InterfaceAudience.Private
     public int getViewId() {
-        return viewStore.getViewId();
+        return viewStore.getViewID();
     }
 
     @InterfaceAudience.Private

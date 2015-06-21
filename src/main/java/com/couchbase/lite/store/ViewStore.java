@@ -89,7 +89,7 @@ public interface ViewStore {
     List<Map<String, Object>> dump();
 
     // TODO: Not sure if this is required, review latoer
-    int getViewId();
+    int getViewID();
     List<QueryRow> queryWithOptions(QueryOptions options) throws CouchbaseLiteException;
     void setCollation(View.TDViewCollation collation);
 }

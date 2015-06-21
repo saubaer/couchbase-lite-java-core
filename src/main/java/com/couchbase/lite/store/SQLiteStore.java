@@ -1,6 +1,23 @@
 package com.couchbase.lite.store;
 
-import com.couchbase.lite.*;
+import com.couchbase.lite.Attachment;
+import com.couchbase.lite.BlobKey;
+import com.couchbase.lite.ChangesOptions;
+import com.couchbase.lite.CouchbaseLiteException;
+import com.couchbase.lite.Database;
+import com.couchbase.lite.Document;
+import com.couchbase.lite.DocumentChange;
+import com.couchbase.lite.Manager;
+import com.couchbase.lite.Misc;
+import com.couchbase.lite.Query;
+import com.couchbase.lite.QueryOptions;
+import com.couchbase.lite.QueryRow;
+import com.couchbase.lite.ReplicationFilter;
+import com.couchbase.lite.Revision;
+import com.couchbase.lite.RevisionList;
+import com.couchbase.lite.Status;
+import com.couchbase.lite.TransactionalTask;
+import com.couchbase.lite.View;
 import com.couchbase.lite.internal.AttachmentInternal;
 import com.couchbase.lite.internal.InterfaceAudience;
 import com.couchbase.lite.internal.RevisionInternal;
@@ -12,9 +29,11 @@ import com.couchbase.lite.storage.SQLiteStorageEngineFactory;
 import com.couchbase.lite.support.Base64;
 import com.couchbase.lite.support.RevisionUtils;
 import com.couchbase.lite.util.Log;
+import com.couchbase.lite.util.SQLiteUtils;
 import com.couchbase.lite.util.TextUtils;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
@@ -40,10 +59,12 @@ public class SQLiteStore implements Store {
     // (Note: Declaring revs.sequence as AUTOINCREMENT means the values will always be
     // monotonically increasing, never reused. See <http://www.sqlite.org/autoinc.html>)
     public static final String SCHEMA = "" +
+            // docs
             "CREATE TABLE docs ( " +
             "        doc_id INTEGER PRIMARY KEY, " +
             "        docid TEXT UNIQUE NOT NULL); " +
             "    CREATE INDEX docs_docid ON docs(docid); " +
+            // revs
             "    CREATE TABLE revs ( " +
             "        sequence INTEGER PRIMARY KEY AUTOINCREMENT, " +
             "        doc_id INTEGER NOT NULL REFERENCES docs(doc_id) ON DELETE CASCADE, " +
@@ -52,26 +73,33 @@ public class SQLiteStore implements Store {
             "        current BOOLEAN, " +
             "        deleted BOOLEAN DEFAULT 0, " +
             "        json BLOB, " +
+            "        no_attachments BOOLEAN, " +
             "        UNIQUE (doc_id, revid)); " +
-            "    CREATE INDEX revs_current ON revs(doc_id, current); " +
             "    CREATE INDEX revs_parent ON revs(parent); " +
+            "    CREATE INDEX revs_by_docid_revid ON revs(doc_id, revid desc, current, deleted); " +
+            "    CREATE INDEX revs_current ON revs(doc_id, current desc, deleted, revid desc); " +
+            // localdocs
             "    CREATE TABLE localdocs ( " +
             "        docid TEXT UNIQUE NOT NULL, " +
             "        revid TEXT NOT NULL COLLATE REVID, " +
             "        json BLOB); " +
             "    CREATE INDEX localdocs_by_docid ON localdocs(docid); " +
+            // views
             "    CREATE TABLE views ( " +
             "        view_id INTEGER PRIMARY KEY, " +
             "        name TEXT UNIQUE NOT NULL," +
             "        version TEXT, " +
-            "        lastsequence INTEGER DEFAULT 0); " +
+            "        lastsequence INTEGER DEFAULT 0," +
+            "        total_docs INTEGER DEFAULT -1); " +
             "    CREATE INDEX views_by_name ON views(name); " +
+            // maps - todo: remove
             "    CREATE TABLE maps ( " +
             "        view_id INTEGER NOT NULL REFERENCES views(view_id) ON DELETE CASCADE, " +
             "        sequence INTEGER NOT NULL REFERENCES revs(sequence) ON DELETE CASCADE, " +
             "        key TEXT NOT NULL COLLATE JSON, " +
             "        value TEXT); " +
             "    CREATE INDEX maps_keys on maps(view_id, key COLLATE JSON); " +
+            // attachments - todo: remove
             "    CREATE TABLE attachments ( " +
             "        sequence INTEGER NOT NULL REFERENCES revs(sequence) ON DELETE CASCADE, " +
             "        filename TEXT NOT NULL, " +
@@ -80,11 +108,11 @@ public class SQLiteStore implements Store {
             "        length INTEGER NOT NULL, " +
             "        revpos INTEGER DEFAULT 0); " +
             "    CREATE INDEX attachments_by_sequence on attachments(sequence, filename); " +
-            "    CREATE TABLE replicators ( " +
-            "        remote TEXT NOT NULL, " +
-            "        push BOOLEAN, " +
-            "        last_sequence TEXT, " +
-            "        UNIQUE (remote, push)); " +
+            // info
+            "    CREATE TABLE info (" +
+            "        key TEXT PRIMARY KEY," +
+            "        value TEXT);" +
+            // version
             "    PRAGMA user_version = 3"; // at the end, update user_version
 
     // transactionLevel is per thread
@@ -174,41 +202,6 @@ public class SQLiteStore implements Store {
                 dbVersion = 3;
             }
 
-            if (dbVersion < 2) {
-                // Version 2: added attachments.revpos
-                String upgradeSql = "ALTER TABLE attachments ADD COLUMN revpos INTEGER DEFAULT 0; " +
-                        "PRAGMA user_version = 2";
-                if (!initialize(upgradeSql)) {
-                    return false;
-                }
-                dbVersion = 2;
-            }
-
-            if (dbVersion < 3) {
-                String upgradeSql = "CREATE TABLE IF NOT EXISTS localdocs ( " +
-                        "docid TEXT UNIQUE NOT NULL, " +
-                        "revid TEXT NOT NULL, " +
-                        "json BLOB); " +
-                        "CREATE INDEX IF NOT EXISTS localdocs_by_docid ON localdocs(docid); " +
-                        "PRAGMA user_version = 3";
-                if (!initialize(upgradeSql)) {
-                    return false;
-                }
-                dbVersion = 3;
-            }
-
-            if (dbVersion < 4) {
-                String upgradeSql = "CREATE TABLE info ( " +
-                        "key TEXT PRIMARY KEY, " +
-                        "value TEXT); " +
-                        "INSERT INTO INFO (key, value) VALUES ('privateUUID', '" + Misc.CreateUUID() + "'); " +
-                        "INSERT INTO INFO (key, value) VALUES ('publicUUID',  '" + Misc.CreateUUID() + "'); " +
-                        "PRAGMA user_version = 4";
-                if (!initialize(upgradeSql)) {
-                    return false;
-                }
-                dbVersion = 4;
-            }
 
             if (dbVersion < 5) {
                 // Version 5: added encoding for attachments
@@ -221,90 +214,6 @@ public class SQLiteStore implements Store {
                 dbVersion = 5;
             }
 
-
-            if (dbVersion < 6) {
-                // Version 6: enable Write-Ahead Log (WAL) <http://sqlite.org/wal.html>
-                // Not supported on Android, require SQLite 3.7.0
-                //String upgradeSql  = "PRAGMA journal_mode=WAL; " +
-
-                // NOTE: For Android, WAL should be set when open the storageEngine
-                //       Check AndroidSQLiteStorageEngine.java public boolean open(String path) method.
-                //       http://developer.android.com/reference/android/database/sqlite/SQLiteDatabase.html#enableWriteAheadLogging()
-
-                String upgradeSql = "PRAGMA user_version = 6";
-                if (!initialize(upgradeSql)) {
-                    return false;
-                }
-                dbVersion = 6;
-            }
-
-            if (dbVersion < 7) {
-                // Version 7: enable full-text search
-                // Note: Apple's SQLite build does not support the icu or unicode61 tokenizers :(
-                // OPT: Could add compress/decompress functions to make stored content smaller
-                // Not supported on Android
-                //String upgradeSql = "CREATE VIRTUAL TABLE fulltext USING fts4(content, tokenize=unicodesn); " +
-                //"ALTER TABLE maps ADD COLUMN fulltext_id INTEGER; " +
-                //"CREATE INDEX IF NOT EXISTS maps_by_fulltext ON maps(fulltext_id); " +
-                //"CREATE TRIGGER del_fulltext DELETE ON maps WHEN old.fulltext_id not null " +
-                //"BEGIN DELETE FROM fulltext WHERE rowid=old.fulltext_id| END; " +
-                String upgradeSql = "PRAGMA user_version = 7";
-                if (!initialize(upgradeSql)) {
-                    return false;
-                }
-                dbVersion = 7;
-            }
-
-            // (Version 8 was an older version of the geo index)
-
-            if (dbVersion < 9) {
-                // Version 9: Add geo-query index
-                //String upgradeSql = "CREATE VIRTUAL TABLE bboxes USING rtree(rowid, x0, x1, y0, y1); " +
-                //"ALTER TABLE maps ADD COLUMN bbox_id INTEGER; " +
-                //"ALTER TABLE maps ADD COLUMN geokey BLOB; " +
-                //"CREATE TRIGGER del_bbox DELETE ON maps WHEN old.bbox_id not null " +
-                //"BEGIN DELETE FROM bboxes WHERE rowid=old.bbox_id| END; " +
-                String upgradeSql = "PRAGMA user_version = 9";
-                if (!initialize(upgradeSql)) {
-                    return false;
-                }
-                dbVersion = 9;
-            }
-
-            if (dbVersion < 10) {
-                // Version 10: Add rev flag for whether it has an attachment
-                String upgradeSql = "ALTER TABLE revs ADD COLUMN no_attachments BOOLEAN; " +
-                        "PRAGMA user_version = 10";
-                if (!initialize(upgradeSql)) {
-                    return false;
-                }
-                dbVersion = 10;
-            }
-
-            // (Version 11 used to create the index revs_cur_deleted, which is obsoleted in version 16)
-
-            // (Version 12: CBL Android/Java skipped 12 before. Instead, we ported bug fix at dbVersion 18)
-
-            if (dbVersion < 13) {
-                // Version 13: Add rows to track number of rows in the views
-                String upgradeSql = "ALTER TABLE views ADD COLUMN total_docs INTEGER DEFAULT -1; " +
-                        "PRAGMA user_version = 13";
-                if (!initialize(upgradeSql)) {
-                    return false;
-                }
-                dbVersion = 13;
-            }
-
-            if (dbVersion < 14) {
-                // Version 14: Add index for getting a document with doc and rev id
-                String upgradeSql = "CREATE INDEX IF NOT EXISTS revs_by_docid_revid ON revs(doc_id, revid desc, current, deleted); " +
-                        "PRAGMA user_version = 14";
-                if (!initialize(upgradeSql)) {
-                    return false;
-                }
-                dbVersion = 14;
-            }
-
             if (dbVersion < 15) {
                 // Version 15: Add sequence index on maps and attachments for revs(sequence) on DELETE CASCADE
                 String upgradeSql = "CREATE INDEX maps_sequence ON maps(sequence); " +
@@ -315,7 +224,6 @@ public class SQLiteStore implements Store {
                 }
                 dbVersion = 15;
             }
-
 
             if (dbVersion < 16) {
                 // Version 16: Fix the very suboptimal index revs_cur_deleted.
@@ -371,6 +279,16 @@ public class SQLiteStore implements Store {
                     return false;
                 }
                 dbVersion = 18;
+            }
+
+            if (dbVersion < 21) {
+                // Version 18:
+                String upgradeSql = "ALTER TABLE revs ADD COLUMN doc_type TEXT; " +
+                        "PRAGMA user_version = 21";
+                if (!initialize(upgradeSql)) {
+                    return false;
+                }
+                dbVersion = 21;
             }
 
             // NOTE: Following lines of code are for compatibility with Couchbase Lite iOS v1.1.0 storageEngine format.
@@ -482,15 +400,17 @@ public class SQLiteStore implements Store {
                 dbVersion = 20;
             }
 
+
             // NOTE: CBL Android/Java v1.1.0 Set storageEngine version 20.
             //       20 is higher than any previous release, but lower than CBL iOS v1.1.0 - 101
-            if (dbVersion < 20) {
+            if (dbVersion < 21) {
                 String upgradeSql = "PRAGMA user_version = 20";
                 if (!initialize(upgradeSql)) {
                     return false;
                 }
                 dbVersion = 20;
             }
+
 
             if (isNew) {
                 optimizeSQLIndexes(); // runs ANALYZE query
@@ -555,13 +475,12 @@ public class SQLiteStore implements Store {
 
     @Override
     public long setInfo(String key, String info) {
-        long result = 0;
+        long result = -1;
         try {
             ContentValues args = new ContentValues();
             args.put("key", key);
             args.put("value", info);
             result = storageEngine.insertWithOnConflict("info", null, args, SQLiteStorageEngine.CONFLICT_REPLACE);
-
         } catch (Exception e) {
             Log.e(TAG, "Error inserting document id", e);
         }
@@ -642,33 +561,32 @@ public class SQLiteStore implements Store {
 
     @Override
     public void compact() throws CouchbaseLiteException {
-        // Can't delete any rows because that would lose revision tree history.
-        // But we can remove the JSON of non-current revisions, which is most of the space.
+        // Start off by pruning each revision tree's depth:
+        pruneRevsToMaxDepth(maxRevTreeDepth);
+
+        // Remove the JSON of non-current revisions, which is most of the space.
         try {
-            Log.v(TAG, "Pruning old revisions...");
-            pruneRevsToMaxDepth(0);
             Log.v(TAG, "Deleting JSON of old revisions...");
             ContentValues args = new ContentValues();
             args.put("json", (String) null);
-            storageEngine.update("revs", args, "current=0", null);
+            args.put("doc_type", (String) null);
+            args.put("no_attachments", 1);
+            int changes = storageEngine.update("revs", args, "current=0", null);
+            Log.v(TAG, "... deleted %d revisions", changes);
         } catch (SQLException e) {
             Log.e(TAG, "Error compacting", e);
             throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
         }
 
-        Log.v(TAG, "Deleting old attachments...");
-        Status result = garbageCollectAttachments();
-        if (!result.isSuccessful()) {
-            throw new CouchbaseLiteException(result);
-        }
-
-        Log.v(TAG, "Vacuuming SQLite sqliteDb...");
+        Log.v(TAG, "Vacuuming SQLite database...");
         try {
             storageEngine.execSQL("VACUUM");
         } catch (SQLException e) {
             Log.e(TAG, "Error vacuuming sqliteDb", e);
             throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
         }
+
+        Log.v(TAG, "...Finished database compaction.");
     }
 
     @Override
@@ -791,14 +709,14 @@ public class SQLiteStore implements Store {
         // First get the parent's sequence:
         long seq = rev.getSequence();
         if (seq > 0) {
-            seq = longForQuery("SELECT parent FROM revs WHERE sequence=?", new String[]{Long.toString(seq)});
+            seq = SQLiteUtils.longForQuery(storageEngine, "SELECT parent FROM revs WHERE sequence=?", new String[]{Long.toString(seq)});
         } else {
             long docNumericID = getDocNumericID(rev.getDocId());
             if (docNumericID <= 0) {
                 return null;
             }
             String[] args = new String[]{Long.toString(docNumericID), rev.getRevId()};
-            seq = longForQuery("SELECT parent FROM revs WHERE doc_id=? and revid=?", args);
+            seq = SQLiteUtils.longForQuery(storageEngine, "SELECT parent FROM revs WHERE doc_id=? and revid=?", args);
         }
 
         if (seq == 0) {
@@ -1041,6 +959,51 @@ public class SQLiteStore implements Store {
         return numRevisionsRemoved;
     }
 
+    /**
+     * - (NSSet*) findAllAttachmentKeys: (NSError**)outError
+     */
+    @Override
+    public Set<BlobKey> findAllAttachmentKeys() throws CouchbaseLiteException{
+        Set<BlobKey> allKeys = new HashSet<BlobKey>();
+        String sql = "SELECT json FROM revs WHERE no_attachments != 1";
+        Cursor cursor = null;
+        try {
+            cursor = storageEngine.rawQuery(sql, null);
+            cursor.moveToNext();
+            while (!cursor.isAfterLast()) {
+                byte[] json = cursor.getBlob(0);
+                if(json != null && json.length > 0) {
+                    try {
+                        Map<String, Object> docProperties = Manager.getObjectMapper().readValue(json, Map.class);
+                        if(docProperties.containsKey("_attachments")) {
+                            Map<String, Object> attachments = (Map<String, Object>) docProperties.get("_attachments");
+                            Iterator<String> itr = attachments.keySet().iterator();
+                            while (itr.hasNext()) {
+                                String name = itr.next();
+                                Map<String, Object> attachment = (Map<String, Object>) attachments.get(name);
+                                String digest = (String) attachment.get("digest");
+                                BlobKey key = new BlobKey(digest);
+                                allKeys.add(key);
+                            }
+                        }
+                    } catch (IOException e) {
+                        Log.e(TAG, e.toString(), e);
+                    }
+                }
+                cursor.moveToNext();
+            }
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+        return allKeys;
+    }
+
+    /**
+     * - (CBLQueryIteratorBlock) getAllDocs: (CBLQueryOptions*)options
+     *                               status: (CBLStatus*)outStatus
+     */
     @Override
     public Map<String, Object> getAllDocs(QueryOptions options) throws CouchbaseLiteException {
 
@@ -1056,9 +1019,10 @@ public class SQLiteStore implements Store {
             updateSeq = getLastSequence();  // TODO: needs to be atomic with the following SELECT
         }
 
+        // Generate the SELECT statement, based on the options:
         StringBuffer sql = new StringBuffer("SELECT revs.doc_id, docid, revid, sequence");
         if (options.isIncludeDocs()) {
-            sql.append(", json");
+            sql.append(", json, no_attachments");
         }
         if (includeDeletedDocs) {
             sql.append(", deleted");
@@ -1075,6 +1039,7 @@ public class SQLiteStore implements Store {
         if (!includeDeletedDocs) {
             sql.append(" AND deleted=0");
         }
+
         List<String> args = new ArrayList<String>();
         Object minKey = options.getStartKey();
         Object maxKey = options.getEndKey();
@@ -1109,26 +1074,25 @@ public class SQLiteStore implements Store {
         args.add(Integer.toString(options.getLimit()));
         args.add(Integer.toString(options.getSkip()));
 
+        // Now run the database query:
         Cursor cursor = null;
         Map<String, QueryRow> docs = new HashMap<String, QueryRow>();
-
-
         try {
+            // Get row values now, before the code below advances 'cursor':
             cursor = storageEngine.rawQuery(sql.toString(), args.toArray(new String[args.size()]));
 
-            boolean keepGoing = cursor.moveToNext();
-
+            boolean keepGoing = cursor.moveToNext(); // Go to first result row
             while (keepGoing) {
-
                 long docNumericID = cursor.getLong(0);
-                String docId = cursor.getString(1);
-                String revId = cursor.getString(2);
+                String docID = cursor.getString(1);
+                String revID = cursor.getString(2);
                 long sequenceNumber = cursor.getLong(3);
                 boolean deleted = includeDeletedDocs && cursor.getInt(getDeletedColumnIndex(options)) > 0;
                 Map<String, Object> docContents = null;
                 if (options.isIncludeDocs()) {
+                    // Fill in the document contents:
                     byte[] json = cursor.getBlob(4);
-                    docContents = documentPropertiesFromJSON(json, docId, revId, deleted, sequenceNumber, options.getContentOptions());
+                    docContents = documentPropertiesFromJSON(json, docID, revID, deleted, sequenceNumber, options.getContentOptions());
                 }
 
                 // Iterate over following rows with the same doc_id -- these are conflicts.
@@ -1137,55 +1101,50 @@ public class SQLiteStore implements Store {
                 while (((keepGoing = cursor.moveToNext()) == true) && cursor.getLong(0) == docNumericID) {
                     if (options.getAllDocsMode() == Query.AllDocsMode.SHOW_CONFLICTS || options.getAllDocsMode() == Query.AllDocsMode.ONLY_CONFLICTS) {
                         if (conflicts.isEmpty()) {
-                            conflicts.add(revId);
+                            conflicts.add(revID);
                         }
                         conflicts.add(cursor.getString(2));
                     }
                 }
 
-                if (options.getAllDocsMode() == Query.AllDocsMode.ONLY_CONFLICTS && conflicts.isEmpty()) {
+                if (options.getAllDocsMode() == Query.AllDocsMode.ONLY_CONFLICTS && conflicts.isEmpty())
                     continue;
-                }
 
                 Map<String, Object> value = new HashMap<String, Object>();
-                value.put("rev", revId);
+                value.put("rev", revID);
                 value.put("_conflicts", conflicts);
                 if (includeDeletedDocs) {
                     value.put("deleted", (deleted ? true : null));
                 }
-                QueryRow change = new QueryRow(docId, sequenceNumber, docId, value, docContents, null);
-                if (options.getKeys() != null) {
-                    docs.put(docId, change);
-                }
+                QueryRow change = new QueryRow(docID, sequenceNumber, docID, value, docContents, null);
+                if (options.getKeys() != null)
+                    docs.put(docID, change);
                 // TODO: In the future, we need to implement CBLRowPassesFilter() in CBLView+Querying.m
-                else if (options.getPostFilter() == null || options.getPostFilter().apply(change)) {
+                else if (options.getPostFilter() == null || options.getPostFilter().apply(change))
                     rows.add(change);
-                }
             }
 
+            // If given doc IDs, sort the output into that order, and add entries for missing docs:
             if (options.getKeys() != null) {
                 for (Object docIdObject : options.getKeys()) {
                     if (docIdObject instanceof String) {
-                        String docId = (String) docIdObject;
-                        QueryRow change = docs.get(docId);
+                        String docID = (String) docIdObject;
+                        QueryRow change = docs.get(docID);
                         if (change == null) {
                             Map<String, Object> value = new HashMap<String, Object>();
-                            long docNumericID = getDocNumericID(docId);
+                            long docNumericID = getDocNumericID(docID);
                             if (docNumericID > 0) {
                                 boolean deleted;
                                 AtomicBoolean outIsDeleted = new AtomicBoolean(false);
-                                AtomicBoolean outIsConflict = new AtomicBoolean();
-                                String revId = winningRevIDOfDoc(docNumericID, outIsDeleted, outIsConflict);
-                                if (outIsDeleted.get()) {
-                                    deleted = true;
-                                }
-                                if (revId != null) {
-                                    value.put("rev", revId);
+                                String revID = winningRevIDOfDoc(docNumericID, outIsDeleted, null);
+                                if (revID != null) {
+                                    value.put("rev", revID);
                                     value.put("deleted", true);
                                 }
                             }
-                            change = new QueryRow((value != null ? docId : null), 0, docId, value, null, null);
+                            change = new QueryRow((value != null ? docID : null), 0, docID, value, null, null);
                         }
+                        // TODO add options.filter
                         rows.add(change);
                     }
                 }
@@ -1433,7 +1392,7 @@ public class SQLiteStore implements Store {
 
             //// PART III: In which the actual insertion finally takes place:
             // Now insert the rev itself:
-            long newSequence = insertRevision(newRev, docNumericID, parentSequence, true, (attachments != null), json);
+            long newSequence = insertRevision(newRev, docNumericID, parentSequence, true, (attachments != null), json, null);
             if (newSequence <= 0) {
                 // The insert failed. If it was due to a constraint violation, that means a revision
                 // already exists with identical contents and the same parent rev. We can ignore this
@@ -1451,13 +1410,16 @@ public class SQLiteStore implements Store {
             }
 
             // Make replaced rev non-current:
-            try {
-                ContentValues args = new ContentValues();
-                args.put("current", 0);
-                storageEngine.update("revs", args, "sequence=?", new String[]{String.valueOf(parentSequence)});
-            } catch (SQLException e) {
-                Log.e(TAG, "Error setting parent rev non-current", e);
-                throw new CouchbaseLiteException(e, Status.INTERNAL_SERVER_ERROR);
+            if(parentSequence>0) {
+                try {
+                    ContentValues args = new ContentValues();
+                    args.put("current", 0);
+                    args.put("doc_type", (String)null);
+                    storageEngine.update("revs", args, "sequence=?", new String[]{String.valueOf(parentSequence)});
+                } catch (SQLException e) {
+                    Log.e(TAG, "Error setting parent rev non-current", e);
+                    throw new CouchbaseLiteException(e, Status.INTERNAL_SERVER_ERROR);
+                }
             }
 
             if (newSequence <= 0) {
@@ -1615,7 +1577,7 @@ public class SQLiteStore implements Store {
                     }
 
                     // Insert it:
-                    sequence = insertRevision(newRev, docNumericID, sequence, current, (newRev.getAttachments() != null && newRev.getAttachments().size() > 0), data);
+                    sequence = insertRevision(newRev, docNumericID, sequence, current, (newRev.getAttachments() != null && newRev.getAttachments().size() > 0), data, null);
 
                     if (sequence <= 0) {
                         throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
@@ -1638,6 +1600,7 @@ public class SQLiteStore implements Store {
             if (localParentSequence > 0 && localParentSequence != sequence) {
                 ContentValues args = new ContentValues();
                 args.put("current", 0);
+                args.put("doc_type", (String)null);
                 String[] whereArgs = {Long.toString(localParentSequence)};
                 int numRowsChanged = 0;
                 try {
@@ -2340,29 +2303,6 @@ public class SQLiteStore implements Store {
     }
 
     @Override
-    public String lastSequenceWithCheckpointId(String checkpointId) {
-        Cursor cursor = null;
-        String result = null;
-        try {
-            // This table schema is out of date but I'm keeping it the way it is for compatibility.
-            // The 'remote' column now stores the opaque checkpoint IDs, and 'push' is ignored.
-            String[] args = {checkpointId};
-            cursor = storageEngine.rawQuery("SELECT last_sequence FROM replicators WHERE remote=?", args);
-            if (cursor.moveToNext()) {
-                result = cursor.getString(0);
-            }
-        } catch (SQLException e) {
-            Log.e(TAG, "Error getting last sequence", e);
-            return null;
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-        return result;
-    }
-
-    @Override
     public void deleteLocalDocument(String docID, String revID) throws CouchbaseLiteException {
         if (docID == null) {
             throw new CouchbaseLiteException(Status.BAD_REQUEST);
@@ -2528,17 +2468,6 @@ public class SQLiteStore implements Store {
     }
 
     @Override
-    public boolean setLastSequence(String lastSequence, String checkpointId, boolean push) {
-        Log.v(TAG, "%s: setLastSequence() called with lastSequence: %s checkpointId: %s", this, lastSequence, checkpointId);
-        ContentValues values = new ContentValues();
-        values.put("remote", checkpointId);
-        values.put("push", push);
-        values.put("last_sequence", lastSequence);
-        long newId = storageEngine.insertWithOnConflict("replicators", null, values, SQLiteStorageEngine.CONFLICT_REPLACE);
-        return (newId == -1);
-    }
-
-    @Override
     public void insertAttachmentForSequenceWithNameAndType(long sequence, String name, String contentType, int revpos, BlobKey key, long length, AttachmentInternal.AttachmentEncoding encoding, long encodedLength) throws CouchbaseLiteException {
         try {
             ContentValues args = new ContentValues();
@@ -2573,6 +2502,8 @@ public class SQLiteStore implements Store {
     ///////////////////////////////////////////////////////////////////////////
     // Internal (PROTECTED & PRIVATE) METHODS
     ///////////////////////////////////////////////////////////////////////////
+
+
 
     /**
      * Prune revisions to the given max depth.  Eg, remove revisions older than that max depth,
@@ -2644,12 +2575,20 @@ public class SQLiteStore implements Store {
         return outPruned;
     }
 
-    private boolean initialize(String statements) {
-        try {
-            for (String statement : statements.split(";")) {
+    protected boolean runStatements(String statements){
+        for (String statement : statements.split(";")) {
+            try {
                 storageEngine.execSQL(statement);
+            } catch (SQLException e) {
+                Log.e(TAG, "Failed to execSQL: " + statement, e);
+                return false;
             }
-        } catch (SQLException e) {
+        }
+        return true;
+    }
+
+    private boolean initialize(String statements) {
+        if(!runStatements(statements)){
             close();
             return false;
         }
@@ -2797,24 +2736,8 @@ public class SQLiteStore implements Store {
     }
 
     private boolean sequenceHasAttachments(long sequence) {
-        Cursor cursor = null;
-
         String args[] = {Long.toString(sequence)};
-        try {
-            cursor = storageEngine.rawQuery("SELECT 1 FROM attachments WHERE sequence=? LIMIT 1", args);
-            if (cursor.moveToNext()) {
-                return true;
-            } else {
-                return false;
-            }
-        } catch (SQLException e) {
-            Log.e(TAG, "Error getting attachments for sequence", e);
-            return false;
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
+        return SQLiteUtils.booleanForQuery(storageEngine, "SELECT no_attachments=0 FROM revs WHERE sequence=?",args);
     }
 
     private long getOrInsertDocNumericID(String docId) {
@@ -2837,7 +2760,13 @@ public class SQLiteStore implements Store {
         return rowId;
     }
 
-    private long insertRevision(RevisionInternal rev, long docNumericID, long parentSequence, boolean current, boolean hasAttachments, byte[] data) {
+    private long insertRevision(RevisionInternal rev,
+                                long docNumericID,
+                                long parentSequence,
+                                boolean current,
+                                boolean hasAttachments,
+                                byte[] json,
+                                String docType) {
         long rowId = 0;
         try {
             ContentValues args = new ContentValues();
@@ -2849,7 +2778,8 @@ public class SQLiteStore implements Store {
             args.put("current", current);
             args.put("deleted", rev.isDeleted());
             args.put("no_attachments", !hasAttachments);
-            args.put("json", data);
+            args.put("json", json);
+            args.put("doc_type", docType);
             rowId = storageEngine.insert("revs", null, args);
             rev.setSequence(rowId);
         } catch (Exception e) {
@@ -2887,25 +2817,9 @@ public class SQLiteStore implements Store {
      */
     private int getDeletedColumnIndex(QueryOptions options) {
         if (options.isIncludeDocs()) {
-            return 5;
+            return 6; // + json and no_attachments
         } else {
-            return 4;
+            return 4; // revs.doc_id, docid, revid, sequence
         }
-    }
-
-    private long longForQuery(String sqlQuery, String[] args) throws SQLException {
-        Cursor cursor = null;
-        long result = 0;
-        try {
-            cursor = storageEngine.rawQuery(sqlQuery, args);
-            if (cursor.moveToNext()) {
-                result = cursor.getLong(0);
-            }
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-        return result;
     }
 }

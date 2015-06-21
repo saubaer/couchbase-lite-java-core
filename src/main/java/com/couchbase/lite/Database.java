@@ -80,6 +80,10 @@ public final class Database implements StoreDelegate {
      */
     public static int kBigAttachmentLength = (16 * 1024);
 
+    // Default value for maxRevTreeDepth, the max rev depth to preserve in a prune operation
+    public static int DEFAULT_MAX_REVS = 20;
+
+
     private Store store = null;
     private String path;
     private String name;
@@ -240,8 +244,10 @@ public final class Database implements StoreDelegate {
      */
     @InterfaceAudience.Public
     public void compact() throws CouchbaseLiteException {
-        if (store != null)
+        if (store != null) {
             store.compact();
+            store.garbageCollectAttachments();
+        }
     }
 
     /**
@@ -921,7 +927,7 @@ public final class Database implements StoreDelegate {
                                    String oldWinningRevID,
                                    boolean oldWinnerWasDeletion,
                                    RevisionInternal newRev) throws CouchbaseLiteException {
-        
+
         if (oldWinningRevID == null) {
             return newRev;
         }
@@ -1012,6 +1018,16 @@ public final class Database implements StoreDelegate {
         //store.setDelegate(this);
         if (!store.open())
             return false;
+
+        // First-time setup:
+        if(privateUUID() == null){
+            store.setInfo("privateUUID", Misc.CreateUUID());
+            store.setInfo("publicUUID", Misc.CreateUUID());
+        }
+
+        String sMaxRevs = store.getInfo("max_revs");
+        int maxRevs = (sMaxRevs == null) ? DEFAULT_MAX_REVS : Integer.parseInt(sMaxRevs);
+        store.setMaxRevTreeDepth(maxRevs);
 
         // NOTE: Migrate attachment directory path if necessary
         // https://github.com/couchbase/couchbase-lite-java-core/issues/604
@@ -1541,12 +1557,16 @@ public final class Database implements StoreDelegate {
 
     @InterfaceAudience.Private
     public String lastSequenceWithCheckpointId(String checkpointId) {
-        return store == null ? null : store.lastSequenceWithCheckpointId(checkpointId);
+        return store == null ? null : store.getInfo(checkpointInfoKey(checkpointId));
     }
 
     @InterfaceAudience.Private
-    public boolean setLastSequence(String lastSequence, String checkpointId, boolean push) {
-        return store == null ? false : store.setLastSequence(lastSequence, checkpointId, push);
+    public boolean setLastSequence(String lastSequence, String checkpointId) {
+        return store == null ? false : store.setInfo(checkpointInfoKey(checkpointId), lastSequence) != -1;
+    }
+
+    private static String checkpointInfoKey(String checkpointID) {
+        return "checkpoint/" + checkpointID;
     }
 
     @InterfaceAudience.Private

@@ -1,14 +1,24 @@
 package com.couchbase.lite.store;
 
-import com.couchbase.lite.*;
+import com.couchbase.lite.CouchbaseLiteException;
+import com.couchbase.lite.Database;
+import com.couchbase.lite.Emitter;
+import com.couchbase.lite.Manager;
+import com.couchbase.lite.Predicate;
+import com.couchbase.lite.QueryOptions;
+import com.couchbase.lite.QueryRow;
+import com.couchbase.lite.Status;
+import com.couchbase.lite.TransactionalTask;
+import com.couchbase.lite.View;
 import com.couchbase.lite.internal.InterfaceAudience;
 import com.couchbase.lite.internal.RevisionInternal;
 import com.couchbase.lite.storage.ContentValues;
 import com.couchbase.lite.storage.Cursor;
 import com.couchbase.lite.storage.SQLException;
+import com.couchbase.lite.storage.SQLiteStorageEngine;
 import com.couchbase.lite.support.JsonDocument;
 import com.couchbase.lite.util.Log;
-import com.couchbase.lite.util.Utils;
+import com.couchbase.lite.util.SQLiteUtils;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -30,11 +40,15 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
 
     private static final int REDUCE_BATCH_SIZE = 100;
 
+    // public
     private String name;
-    private SQLiteStore store;
-    private int viewId;
     private ViewStoreDelegate delegate;
+
+    // private
+    private SQLiteStore store;
+    private int viewID;
     private View.TDViewCollation collation;
+    private String _mapTableName;
 
     ///////////////////////////////////////////////////////////////////////////
     // Constructor
@@ -43,7 +57,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
     protected SQLiteViewStore(SQLiteStore store, String name, boolean create) {
         this.store = store;
         this.name = name;
-        this.viewId = -1; // means 'unknown'
+        this.viewID = -1; // means 'unknown'
         this.collation = View.TDViewCollation.TDViewCollationUnicode;
     }
 
@@ -74,12 +88,12 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
     @Override
     public void close() {
         store = null;
-        viewId = -1;
+        viewID = -1;
     }
 
     @Override
     public void deleteIndex() {
-        if (getViewId() <= 0) {
+        if (getViewID() <= 0) {
             return;
         }
 
@@ -87,7 +101,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
         try {
             store.beginTransaction();
 
-            String[] whereArgs = {Integer.toString(getViewId())};
+            String[] whereArgs = {Integer.toString(getViewID())};
             store.getStorageEngine().delete("maps", "view_id=?", whereArgs);
 
             ContentValues updateValues = new ContentValues();
@@ -117,7 +131,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                 }
             }
         });
-        viewId = 0;
+        viewID = 0;
     }
 
     /**
@@ -126,28 +140,34 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
      */
     @Override
     public boolean setVersion(String version) {
-        // Update the version column in the database. This is a little weird looking because we want to
-        // avoid modifying the database if the version didn't change, and because the row might not exist
-        // yet.
-
+        // Update the version column in the database. This is a little weird looking because we want
+        // to avoid modifying the database if the version didn't change, and because the row might
+        // not exist yet.
+        SQLiteStorageEngine storage = store.getStorageEngine();
         String sql = "SELECT name, version FROM views WHERE name=?";
         String[] args = {name};
         Cursor cursor = null;
         try {
-            cursor = store.getStorageEngine().rawQuery(sql, args);
+            cursor = storage.rawQuery(sql, args);
             if (!cursor.moveToNext()) {
                 // no such record, so insert
                 ContentValues insertValues = new ContentValues();
                 insertValues.put("name", name);
                 insertValues.put("version", version);
-                store.getStorageEngine().insert("views", null, insertValues);
-                return true;
+                insertValues.put("total_docs", 0);
+                storage.insert("views", null, insertValues);
+                createIndex();
+                return true; // created new view
             }
+
             ContentValues updateValues = new ContentValues();
             updateValues.put("version", version);
             updateValues.put("lastSequence", 0);
+            updateValues.put("total_docs", 0);
             String[] whereArgs = {name, version};
-            int rowsAffected = store.getStorageEngine().update("views", updateValues, "name=? AND version!=?",
+            int rowsAffected = storage.update("views",
+                    updateValues,
+                    "name=? AND version!=?",
                     whereArgs);
             return (rowsAffected > 0);
         } catch (SQLException e) {
@@ -162,30 +182,15 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
 
     @Override
     public int getTotalRows() {
-
-        int totalRows = -1;
-        String sql = "SELECT total_docs FROM views WHERE view_id=?";
-        String[] args = {String.valueOf(viewId)};
-        Cursor cursor = null;
-        try {
-            cursor = store.getStorageEngine().rawQuery(sql, args);
-            if (cursor.moveToNext()) {
-                totalRows = cursor.getInt(0);
-            }
-        } catch (SQLException e) {
-            Log.e(Log.TAG_VIEW, "Error getting total_docs", e);
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-
-        // need to count & update rows
-        if (totalRows < 0) {
-            totalRows = countTotalRows();
-            if (totalRows >= 0) {
-                updateTotalRows(totalRows);
-            }
+        SQLiteStorageEngine storageEngine = store.getStorageEngine();
+        String sql = "SELECT total_docs FROM views WHERE name=?";
+        String[] args = {name};
+        int totalRows = SQLiteUtils.intForQuery(storageEngine, sql, args);
+        if(totalRows == -1){ // means unknown
+            createIndex();
+            sql = queryString("SELECT COUNT(*) FROM 'maps_#'");
+            totalRows = SQLiteUtils.intForQuery(storageEngine, sql, null);
+            updateTotalRows(totalRows);
         }
         return totalRows;
     }
@@ -231,8 +236,8 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
         Log.v(Log.TAG_VIEW, "Re-indexing view: %s", name);
         assert (delegate.getMap() != null);
 
-        if (getViewId() <= 0) {
-            String msg = String.format("getViewId() < 0");
+        if (getViewID() <= 0) {
+            String msg = String.format("getViewID() < 0");
             throw new CouchbaseLiteException(msg, new Status(Status.NOT_FOUND));
         }
 
@@ -256,13 +261,13 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
 
                     // If the lastSequence has been reset to 0, make sure to remove
                     // any leftover rows:
-                    String[] whereArgs = {Integer.toString(getViewId())};
+                    String[] whereArgs = {Integer.toString(getViewID())};
                     store.getStorageEngine().delete("maps", "view_id=?", whereArgs);
                 } else {
                     store.optimizeSQLIndexes();
                     // Delete all obsolete map results (ones from since-replaced
                     // revisions):
-                    String[] args = {Integer.toString(getViewId()),
+                    String[] args = {Integer.toString(getViewID()),
                             Long.toString(last),
                             Long.toString(last)};
                     store.getStorageEngine().execSQL(
@@ -295,7 +300,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                         }
 
                         // NOTE: execSQL() is little faster than insert()
-                        String[] args = {Integer.toString(getViewId()), Long.toString(sequence), keyJson, valueJson};
+                        String[] args = {Integer.toString(getViewID()), Long.toString(sequence), keyJson, valueJson};
                         store.getStorageEngine().execSQL("INSERT INTO maps (view_id, sequence, key, value) VALUES(?,?,?,?) ", args);
                     } catch (Exception e) {
                         Log.e(Log.TAG_VIEW, "Error emitting", e);
@@ -313,7 +318,12 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
             //       Because json field could be large, maximum size is 2MB.
             // StringBuffer sql = new StringBuffer( "SELECT revs.doc_id, sequence, docid, revid, json, no_attachments, deleted FROM revs, docs WHERE sequence>? AND current!=0 ");
 
-            StringBuffer sql = new StringBuffer("SELECT revs.doc_id, sequence, docid, revid, no_attachments, deleted FROM revs, docs WHERE sequence>? AND current!=0 ");
+            //TODO: boolean checkDocTypes = docTypes.count > 1 || (allDocTypes && docTypes.count > 0);
+            boolean checkDocTypes = false;
+            StringBuffer sql = new StringBuffer("SELECT revs.doc_id, sequence, docid, revid, no_attachments, deleted ");
+            if (checkDocTypes)
+                sql.append(", doc_type ");
+            sql.append("FROM revs, docs WHERE sequence>? AND current!=0 ");
             if (minLastSequence == 0) {
                 sql.append("AND deleted=0 ");
             }
@@ -344,6 +354,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
 
                 boolean noAttachments = cursor.getInt(4) > 0;
                 boolean deleted = cursor.getInt(5) > 0;
+                String docType = checkDocTypes ? cursor.getString(6) : null;
 
                 while ((keepGoing = cursor.moveToNext()) && (cursor.isNull(0) || cursor.getLong(0) == docID)) {
                     // Skip rows with the same doc_id -- these are losing conflicts.
@@ -369,7 +380,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                             // Remove its emitted rows:
                             long oldSequence = cursor2.getLong(1);
                             String[] args = {
-                                    Integer.toString(getViewId()),
+                                    Integer.toString(getViewID()),
                                     Long.toString(oldSequence)
                             };
                             store.getStorageEngine().execSQL(
@@ -394,7 +405,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                 }
 
                 String[] selectArgs3 = {Long.toString(sequence)};
-                byte[] json = Utils.byteArrayResultForQuery(store.getStorageEngine(), "SELECT json FROM revs WHERE sequence=?", selectArgs3);
+                byte[] json = SQLiteUtils.byteArrayResultForQuery(store.getStorageEngine(), "SELECT json FROM revs WHERE sequence=?", selectArgs3);
 
                 // Get the document properties, to pass to the map function:
                 EnumSet<Database.TDContentOptions> contentOptions = EnumSet.noneOf(Database.TDContentOptions.class);
@@ -409,6 +420,8 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                         contentOptions
                 );
                 if (properties != null) {
+                    //TODO checkDocTypes here
+
                     // Call the user-defined map() to emit new key/value
                     // pairs from this revision:
                     emitBlock.setSequence(sequence);
@@ -423,7 +436,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
             ContentValues updateValues = new ContentValues();
             updateValues.put("lastSequence", dbMaxSequence);
             updateValues.put("total_docs", countTotalRows());
-            String[] whereArgs = {Integer.toString(getViewId())};
+            String[] whereArgs = {Integer.toString(getViewID())};
             store.getStorageEngine().update("views", updateValues, "view_id=?", whereArgs);
 
             // FIXME actually count number added :)
@@ -468,15 +481,15 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
     }
 
     @Override
-    public int getViewId() {
-        if (viewId < 0) {
+    public int getViewID() {
+        if (viewID < 0) {
             String sql = "SELECT view_id FROM views WHERE name=?";
             String[] args = {name};
             Cursor cursor = null;
             try {
                 cursor = store.getStorageEngine().rawQuery(sql, args);
                 if (cursor.moveToNext()) {
-                    viewId = cursor.getInt(0);
+                    viewID = cursor.getInt(0);
                 }
             } catch (SQLException e) {
                 Log.e(Log.TAG_VIEW, "Error getting view id", e);
@@ -486,7 +499,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                 }
             }
         }
-        return viewId;
+        return viewID;
     }
 
     @Override
@@ -571,11 +584,11 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
 
     @Override
     public List<Map<String, Object>> dump() {
-        if (getViewId() < 0) {
+        if (getViewID() < 0) {
             return null;
         }
 
-        String[] selectArgs = {Integer.toString(getViewId())};
+        String[] selectArgs = {Integer.toString(getViewID())};
         Cursor cursor = null;
         List<Map<String, Object>> result = null;
 
@@ -655,7 +668,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
         sql = sql + " FROM maps, revs, docs WHERE maps.view_id=?";
 
         List<String> argsList = new ArrayList<String>();
-        argsList.add(Integer.toString(getViewId()));
+        argsList.add(Integer.toString(getViewID()));
 
         if (options.getKeys() != null) {
             sql += " AND key in (";
@@ -813,7 +826,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
     private int countTotalRows() {
         int totalRows = -1;
         String sql = "SELECT COUNT(view_id) FROM maps WHERE view_id=?";
-        String[] args = {String.valueOf(viewId)};
+        String[] args = {String.valueOf(viewID)};
         Cursor cursor = null;
         try {
             cursor = store.getStorageEngine().rawQuery(sql, args);
@@ -833,8 +846,53 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
     private void updateTotalRows(int totalRows) {
         ContentValues values = new ContentValues();
         values.put("total_docs=", totalRows);
-        store.getStorageEngine().update("views", values, "view_id=?", new String[]{String.valueOf(viewId)});
+        store.getStorageEngine().update("views", values, "view_id=?", new String[]{String.valueOf(getViewID())});
     }
+
+    private String mapTableName() {
+        if(_mapTableName == null){
+            _mapTableName = String.format("%d", getViewID());
+        }
+        return _mapTableName;
+    }
+    /**
+     * The name of the map table is dynamic, based on the ID of the view. This method replaces a '#'
+     * with the view ID in a query string.
+     */
+    private String queryString(String sql){
+        return sql.replaceAll("#", mapTableName());
+    }
+    private boolean runStatements(final String sql){
+        final SQLiteStore db = store;
+        return db.runInTransaction(new TransactionalTask() {
+            @Override
+            public boolean run() {
+                if (!db.runStatements(queryString(sql))) {
+                    return false;
+                }
+                return true;
+            }
+        });
+    }
+
+    private void createIndex(){
+        String sql = "CREATE TABLE IF NOT EXISTS 'maps_#' (" +
+                "sequence INTEGER NOT NULL REFERENCES revs(sequence) ON DELETE CASCADE," +
+                "key TEXT NOT NULL COLLATE JSON," +
+                "value TEXT)";
+        if(!runStatements(sql))
+            Log.w(TAG, "Couldn't create view index `%s`", name);
+    }
+    /*
+    public void deleteIndex(){
+        if (getViewID() <= 0)
+            return;
+        String sql = "DROP TABLE IF EXISTS 'maps_#'; " +
+                "UPDATE views SET lastSequence=0, total_docs=0 WHERE view_id=#";
+        if(!runStatements(sql))
+            Log.w(TAG, "Couldn't delete view index `%s`", name);
+    }
+    */
 
     ///////////////////////////////////////////////////////////////////////////
     // Internal (Private) Static Methods
@@ -844,7 +902,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
      * Are key1 and key2 grouped together at this groupLevel?
      */
     private static boolean groupTogether(Object key1, Object key2, int groupLevel) {
-        if (groupLevel == 0 || !(key1 instanceof List) || !(key2 instanceof List)) {
+    if (groupLevel == 0 || !(key1 instanceof List) || !(key2 instanceof List)) {
             return key1.equals(key2);
         }
         @SuppressWarnings("unchecked")
