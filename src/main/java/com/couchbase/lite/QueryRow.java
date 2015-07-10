@@ -1,11 +1,11 @@
 package com.couchbase.lite;
 
 import com.couchbase.lite.internal.InterfaceAudience;
+import com.couchbase.lite.internal.RevisionInternal;
 import com.couchbase.lite.store.QueryRowStore;
 import com.couchbase.lite.util.Utils;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,7 +50,8 @@ public class QueryRow {
      * takes a separate call to the database. So if you're doing it for every row, using
      * .prefetch and .documentProperties is faster.)
      */
-    private Map<String, Object> documentProperties;
+    //private Map<String, Object> documentProperties;
+    RevisionInternal documentRevision;
 
     private QueryRowStore queryRowStore;
 
@@ -62,7 +63,7 @@ public class QueryRow {
      * The database property will be filled in when I'm added to a QueryEnumerator.
      */
     @InterfaceAudience.Private
-    public QueryRow(String docID, long sequence, Object key, Object value, Map<String, Object> documentProperties, QueryRowStore queryRowStore) {
+    public QueryRow(String docID, long sequence, Object key, Object value, RevisionInternal docRevision, QueryRowStore queryRowStore) {
         // Don't initialize _database yet. I might be instantiated on a background thread (if the
         // query is async) which has a different CBLDatabase instance than the original caller.
         // Instead, the database property will be filled in when I'm added to a CBLQueryEnumerator.
@@ -70,9 +71,11 @@ public class QueryRow {
         this.sequence = sequence;
         this.key = key;
         this.value = value;
-        this.documentProperties = documentProperties; // -> docRevision (RevisionInternal)
+        this.documentRevision = docRevision;
         this.queryRowStore = queryRowStore;
     }
+
+
 
     protected Database getDatabase() {
         return database;
@@ -121,6 +124,7 @@ public class QueryRow {
      */
     @InterfaceAudience.Public
     public String getDocumentId() {
+        /*
         // _documentProperties may have been 'redirected' from a different document
         if (documentProperties != null &&
                 documentProperties.get("_id") != null &&
@@ -129,6 +133,22 @@ public class QueryRow {
         } else {
             return sourceDocID;
         }
+        */
+
+        // Get the doc id from either the embedded document contents, or the '_id' value key.
+        // Failing that, there's no document linking, so use the regular old _sourceDocID
+        String docID = null;
+        if (documentRevision != null)
+            docID = documentRevision.getDocId();
+        if (docID == null) {
+            if(value != null) {
+                Map<String, Object> props = (Map<String, Object>) value;
+                docID = (String) props.get("_id");
+            }
+        }
+        if (docID == null)
+            docID = sourceDocID;
+        return docID;
     }
 
     /**
@@ -149,10 +169,28 @@ public class QueryRow {
      */
     @InterfaceAudience.Public
     public String getDocumentRevisionId() {
+        /*
         String rev = null;
         if (documentProperties != null && documentProperties.containsKey("_rev")) {
             rev = (String) documentProperties.get("_rev");
         }
+        if (rev == null) {
+            if (value instanceof Map) {
+                Map<String, Object> mapValue = (Map<String, Object>) value;
+                rev = (String) mapValue.get("_rev");
+                if (rev == null) {
+                    rev = (String) mapValue.get("rev");
+                }
+            }
+        }
+        return rev;
+        */
+
+        // Get the revision id from either the embedded document contents,
+        // or the '_rev' or 'rev' value key:
+        String rev = null;
+        if (documentRevision != null)
+            rev = documentRevision.getRevId();
         if (rev == null) {
             if (value instanceof Map) {
                 Map<String, Object> mapValue = (Map<String, Object>) value;
@@ -172,7 +210,7 @@ public class QueryRow {
      */
     @InterfaceAudience.Public
     public Map<String, Object> getDocumentProperties() {
-        return documentProperties != null ? Collections.unmodifiableMap(documentProperties) : null;
+        return documentRevision != null ? documentRevision.getProperties() : null;
     }
 
     /**
@@ -228,12 +266,10 @@ public class QueryRow {
         }
         QueryRow other = (QueryRow) object;
 
-        boolean documentPropertiesEqual = Utils.isEqual(documentProperties, other.getDocumentProperties());
-
         if (database == other.database
                 && Utils.isEqual(key, other.getKey())
                 && Utils.isEqual(sourceDocID, other.getSourceDocumentId())
-                && documentPropertiesEqual) {
+                && Utils.isEqual(documentRevision, other.documentRevision)) {
             // If values were emitted, compare them. Otherwise we have nothing to go on so check
             // if _anything_ about the doc has changed (i.e. the sequences are different.)
             if (value != null || other.getValue() != null) {
@@ -265,13 +301,9 @@ public class QueryRow {
         Map<String, Object> result = new HashMap<String, Object>();
         if (value != null || sourceDocID != null) {
             result.put("key", key);
-            if (value != null) {
-                result.put("value", value);
-            }
+            result.put("value", value);
             result.put("id", sourceDocID);
-            if (documentProperties != null) {
-                result.put("doc", documentProperties);
-            }
+            result.put("doc", getDocumentProperties());
         } else {
             result.put("key", key);
             result.put("error", "not_found");

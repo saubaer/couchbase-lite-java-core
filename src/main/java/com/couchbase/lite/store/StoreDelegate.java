@@ -43,11 +43,33 @@ public interface StoreDelegate {
 
     // TODO: Temporary!!!
     Map<String, Validator> getValidations();
-    void validateRevision(RevisionInternal newRev, RevisionInternal oldRev, String parentRevID) throws CouchbaseLiteException;
-    RevisionInternal winner(long docNumericID, String oldWinningRevID, boolean oldWinnerWasDeletion, RevisionInternal newRev) throws CouchbaseLiteException;
-    boolean runFilter(ReplicationFilter filter, Map<String, Object> filterParams, RevisionInternal rev);
+
+    void validateRevision(RevisionInternal newRev,
+                          RevisionInternal oldRev,
+                          String parentRevID)
+            throws CouchbaseLiteException;
+
+    RevisionInternal winner(long docNumericID,
+                            String oldWinningRevID,
+                            boolean oldWinnerWasDeletion,
+                            RevisionInternal newRev)
+            throws CouchbaseLiteException;
+
+    boolean runFilter(ReplicationFilter filter,
+                      Map<String, Object> filterParams,
+                      RevisionInternal rev);
+
     BlobStore getAttachments();
-    Map<String, AttachmentInternal> getAttachmentsFromRevision(RevisionInternal rev, String prevRevID) throws CouchbaseLiteException;
-    void processAttachmentsForRevision(Map<String, AttachmentInternal> attachments, RevisionInternal rev, long parentSequence) throws CouchbaseLiteException;
-    void stubOutAttachmentsInRevision(final Map<String, AttachmentInternal> attachments, final RevisionInternal rev);
+
+    Map<String, AttachmentInternal> getAttachmentsFromRevision(RevisionInternal rev,
+                                                               String prevRevID)
+            throws CouchbaseLiteException;
+
+    void processAttachmentsForRevision(Map<String, AttachmentInternal> attachments,
+                                       RevisionInternal rev,
+                                       long parentSequence)
+            throws CouchbaseLiteException;
+
+    void stubOutAttachmentsInRevision(final Map<String, AttachmentInternal> attachments,
+                                      final RevisionInternal rev);
 }

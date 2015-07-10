@@ -1821,7 +1821,7 @@ public final class Database implements StoreDelegate {
                     }
                 }).start();
             }
-            rows = view.queryWithOptions(options);
+            rows = view.query(options);
         } else {
             // nil view means query _all_docs
             // note: this is a little kludgy, but we have to pull out the "rows" field from the

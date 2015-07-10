@@ -28,11 +28,13 @@ import java.util.List;
  */
 public class QueryOptions {
 
+    public static int QUERY_OPTIONS_DEFAULT_LIMIT = Integer.MAX_VALUE;
+
     private Object startKey = null;
     private Object endKey = null;
     private List<Object> keys = null;
     private int skip = 0;
-    private int limit = Integer.MAX_VALUE;
+    private int limit = QUERY_OPTIONS_DEFAULT_LIMIT;
     private int groupLevel = 0;
     private int prefixMatchLevel = 0;
     private EnumSet<TDContentOptions> contentOptions = EnumSet.noneOf(Database.TDContentOptions.class);

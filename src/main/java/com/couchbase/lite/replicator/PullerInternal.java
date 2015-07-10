@@ -516,7 +516,8 @@ public class PullerInternal extends ReplicationInternal implements ChangeTracker
                     }
                 }
 
-                if(rev.getBody() != null) rev.getBody().release();
+                //if(rev.getBody() != null) rev.getBody().release();
+                if(rev.getBody() != null) rev.getBody().compact();
 
                 // Mark this revision's fake sequence as processed:
                 pendingSequences.removeSequence(fakeSequence);

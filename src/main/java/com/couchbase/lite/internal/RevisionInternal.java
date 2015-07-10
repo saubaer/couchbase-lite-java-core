@@ -56,6 +56,8 @@ public class RevisionInternal {
     }
 
     public Map<String, Object> getProperties() {
+        return body == null ? null : body.getProperties();
+        /*
         Map<String, Object> result = null;
         if (body != null) {
             Map<String, Object> prop;
@@ -71,6 +73,7 @@ public class RevisionInternal {
             result.putAll(prop);
         }
         return result;
+        */
     }
 
     public Object getPropertyForKey(String key) {
@@ -190,7 +193,7 @@ public class RevisionInternal {
 
     @Override
     public String toString() {
-        return "{" + this.docId + " #" + this.revId + (deleted ? "DEL" : "") + "}";
+        return "{" + this.docId + " #" + this.revId +  (deleted ? "DEL" : "") + "}";
     }
 
     /**

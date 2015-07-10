@@ -1008,11 +1008,11 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         if (!status.isSuccessful()) {
             return status;
         }
-        Map<String, Object> body = getBodyAsDictionary();
-        if (body == null) {
+        Map<String, Object> bodyDict = getBodyAsDictionary();
+        if (bodyDict == null) {
             return new Status(Status.BAD_REQUEST);
         }
-        return update(db, null, body, false);
+        return update(db, null, new Body(bodyDict), false);
     }
 
     public Status do_GET_Document_all_docs(Database _db, String _docID, String _attachmentName) throws CouchbaseLiteException {
@@ -1735,19 +1735,29 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         return result;
     }
 
-    private Status update(Database _db, String docID, Map<String, Object> bodyDict, boolean deleting) {
-        Body body = new Body(bodyDict);
+    /**
+     * in CBL_Router+Handlers.m
+     * - (CBLStatus) update: (CBLDatabase*)db
+     *                docID: (NSString*)docID
+     *                 body: (CBL_Body*)body
+     *             deleting: (BOOL)deleting
+     *                error: (NSError**)outError
+     */
+    private Status update(Database _db, String docID, Body body, boolean deleting) {
         Status status = new Status();
 
         if (docID != null && docID.isEmpty() == false) {
             // On PUT/DELETE, get revision ID from either ?rev= query or doc body:
             String revParam = getQuery("rev");
-            if (revParam != null && bodyDict != null && bodyDict.size() > 0) {
-                String revProp = (String) bodyDict.get("_rev");
+
+            // TODO: If-Match
+
+            if (revParam != null && body != null) {
+                String revProp = (String) body.getProperties().get("_rev");
                 if (revProp == null) {
                     // No _rev property in body, so use ?rev= query param instead:
-                    bodyDict.put("_rev", revParam);
-                    body = new Body(bodyDict);
+                    body.getProperties().put("_rev", revParam);
+                    //body = new Body(bodyDict);
                 } else if (!revParam.equals(revProp)) {
                     throw new IllegalArgumentException("Mismatch between _rev and rev");
                 }
@@ -1789,7 +1799,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
 
         if (getQuery("new_edits") == null || (getQuery("new_edits") != null && (new Boolean(getQuery("new_edits"))))) {
             // Regular PUT
-            status = update(_db, docID, bodyDict, false);
+            status = update(_db, docID, new Body(bodyDict), false);
         } else {
             // PUT with new_edits=false -- forcible insertion of existing revision:
             Body body = new Body(bodyDict);
@@ -1932,7 +1942,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         }
 
         // convert from QueryRow -> Map
-        List<QueryRow> queryRows = view.queryWithOptions(options);
+        List<QueryRow> queryRows = view.query(options);
         List<Map<String, Object>> rows = new ArrayList<Map<String, Object>>();
         for (QueryRow queryRow : queryRows) {
             rows.add(queryRow.asJSONDictionary());

@@ -179,14 +179,14 @@ public final class View implements ViewStoreDelegate {
 
     /**
      * Deletes the view, persistently.
-     *
+     * <p/>
      * NOTE: It should be - (void) deleteView;
      */
     @InterfaceAudience.Public
     public void delete() {
-        if(viewStore!=null)
+        if (viewStore != null)
             viewStore.deleteView();
-        if(database != null && name != null)
+        if (database != null && name != null)
             database.forgetView(name);
         close();
     }
@@ -274,8 +274,13 @@ public final class View implements ViewStoreDelegate {
      * @return An array of QueryRow objects.
      */
     @InterfaceAudience.Private
-    public List<QueryRow> queryWithOptions(QueryOptions options) throws CouchbaseLiteException {
-        return viewStore.queryWithOptions(options);
+    public List<QueryRow> query(QueryOptions options) throws CouchbaseLiteException {
+        if (options == null)
+            options = new QueryOptions();
+        if(groupOrReduce(options))
+            return viewStore.reducedQuery(options);
+        else
+            return viewStore.regularQuery(options);
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -306,16 +311,13 @@ public final class View implements ViewStoreDelegate {
         }
     }
 
-    /**
-     * Returns the prefix of the key to use in the result row, at this groupLevel
-     */
-    @InterfaceAudience.Private
-    public static Object groupKey(Object key, int groupLevel) {
-        if (groupLevel > 0 && (key instanceof List) && (((List<Object>) key).size() > groupLevel)) {
-            return ((List<Object>) key).subList(0, groupLevel);
-        } else {
-            return key;
-        }
+    private boolean groupOrReduce(QueryOptions options){
+        if(options.isGroup() || options.getGroupLevel() > 0)
+            return true;
+        else if(options.isReduceSpecified())
+            return options.isReduce();
+        else
+            return this.reduceBlock != null;
     }
 
     ///////////////////////////////////////////////////////////////////////////

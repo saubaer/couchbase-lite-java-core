@@ -1,3 +1,9 @@
+//
+//  SQLiteViewStore.java
+//
+//  Created by Hideki Itakura on 6/16/15.
+//  Copyright (c) 2015 Couchbase, Inc All rights reserved.
+//
 package com.couchbase.lite.store;
 
 import com.couchbase.lite.CouchbaseLiteException;
@@ -7,6 +13,7 @@ import com.couchbase.lite.Manager;
 import com.couchbase.lite.Predicate;
 import com.couchbase.lite.QueryOptions;
 import com.couchbase.lite.QueryRow;
+import com.couchbase.lite.Reducer;
 import com.couchbase.lite.Status;
 import com.couchbase.lite.TransactionalTask;
 import com.couchbase.lite.View;
@@ -96,24 +103,10 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
         if (getViewID() <= 0) {
             return;
         }
-
-        boolean success = false;
-        try {
-            store.beginTransaction();
-
-            String[] whereArgs = {Integer.toString(getViewID())};
-            store.getStorageEngine().delete("maps", "view_id=?", whereArgs);
-
-            ContentValues updateValues = new ContentValues();
-            updateValues.put("lastSequence", 0);
-            store.getStorageEngine().update("views", updateValues, "view_id=?", whereArgs);
-
-            success = true;
-        } catch (SQLException e) {
-            Log.e(Log.TAG_VIEW, "Error removing index", e);
-        } finally {
-            store.endTransaction(success);
-        }
+        String sql = "DROP TABLE IF EXISTS 'maps_#'; " +
+                "UPDATE views SET lastSequence=0, total_docs=0 WHERE view_id=#";
+        if (!runStatements(sql))
+            Log.w(TAG, "Couldn't delete view index `%s`", name);
     }
 
     @Override
@@ -124,11 +117,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                 deleteIndex();
                 String[] whereArgs = {name};
                 int rowsAffected = store.getStorageEngine().delete("views", "name=?", whereArgs);
-                if (rowsAffected > 0) {
-                    return true;
-                } else {
-                    return false;
-                }
+                return rowsAffected > 0 ? true : false;
             }
         });
         viewID = 0;
@@ -186,13 +175,18 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
         String sql = "SELECT total_docs FROM views WHERE name=?";
         String[] args = {name};
         int totalRows = SQLiteUtils.intForQuery(storageEngine, sql, args);
-        if(totalRows == -1){ // means unknown
+        if (totalRows == -1) { // means unknown
             createIndex();
-            sql = queryString("SELECT COUNT(*) FROM 'maps_#'");
-            totalRows = SQLiteUtils.intForQuery(storageEngine, sql, null);
+            totalRows = countTotalRows();
             updateTotalRows(totalRows);
         }
         return totalRows;
+    }
+
+    private int countTotalRows() {
+        SQLiteStorageEngine storageEngine = store.getStorageEngine();
+        String sql = queryString("SELECT COUNT(*) FROM 'maps_#'");
+        return SQLiteUtils.intForQuery(storageEngine, sql, null);
     }
 
     /**
@@ -255,31 +249,28 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                 String msg = String.format("last < 0 (%s)", last);
                 throw new CouchbaseLiteException(msg, new Status(Status.INTERNAL_SERVER_ERROR));
             } else if (last < dbMaxSequence) {
+
                 minLastSequence = Math.min(minLastSequence, last);
 
                 if (last == 0) {
-
-                    // If the lastSequence has been reset to 0, make sure to remove
-                    // any leftover rows:
-                    String[] whereArgs = {Integer.toString(getViewID())};
-                    store.getStorageEngine().delete("maps", "view_id=?", whereArgs);
+                    // If the lastSequence has been reset to 0, make sure to remove any leftover rows:
+                    store.getStorageEngine().execSQL(queryString("DELETE FROM 'maps_#'"));
                 } else {
                     store.optimizeSQLIndexes();
-                    // Delete all obsolete map results (ones from since-replaced
-                    // revisions):
-                    String[] args = {Integer.toString(getViewID()),
-                            Long.toString(last),
-                            Long.toString(last)};
+                    // Delete all obsolete map results (ones from since-replaced revisions):
+                    String[] args = {Long.toString(last), Long.toString(last)};
                     store.getStorageEngine().execSQL(
-                            "DELETE FROM maps WHERE view_id=? AND sequence IN ("
+                            queryString("DELETE FROM 'maps_#' WHERE sequence IN ("
                                     + "SELECT parent FROM revs WHERE sequence>? "
-                                    + "AND +parent>0 AND +parent<=?)", args);
+                                    + "AND +parent>0 AND +parent<=?)"), args);
+
                 }
             }
 
             if (minLastSequence == dbMaxSequence) {
                 // nothing to do (eg,  kCBLStatusNotModified)
-                Log.v(Log.TAG_VIEW, "minLastSequence (%s) == dbMaxSequence (%s), nothing to do", minLastSequence, dbMaxSequence);
+                Log.v(Log.TAG_VIEW, "minLastSequence (%s) == dbMaxSequence (%s), nothing to do",
+                        minLastSequence, dbMaxSequence);
                 result.setCode(Status.NOT_MODIFIED);
                 return;
             }
@@ -300,8 +291,9 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                         }
 
                         // NOTE: execSQL() is little faster than insert()
-                        String[] args = {Integer.toString(getViewID()), Long.toString(sequence), keyJson, valueJson};
-                        store.getStorageEngine().execSQL("INSERT INTO maps (view_id, sequence, key, value) VALUES(?,?,?,?) ", args);
+                        String[] args = {Long.toString(sequence), keyJson, valueJson};
+                        store.getStorageEngine().execSQL(queryString(
+                                "INSERT INTO 'maps_#' (sequence, key, value) VALUES(?,?,?)"), args);
                     } catch (Exception e) {
                         Log.e(Log.TAG_VIEW, "Error emitting", e);
                         // find a better way to propagate this back
@@ -316,11 +308,13 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
             //       index data because following logic skip result if column is null.
             //       To avoid the issue, retrieving json field is isolated from original query.
             //       Because json field could be large, maximum size is 2MB.
-            // StringBuffer sql = new StringBuffer( "SELECT revs.doc_id, sequence, docid, revid, json, no_attachments, deleted FROM revs, docs WHERE sequence>? AND current!=0 ");
+            // StringBuffer sql = new StringBuffer( "SELECT revs.doc_id, sequence, docid, revid,
+            // json, no_attachments, deleted FROM revs, docs WHERE sequence>? AND current!=0 ");
 
             //TODO: boolean checkDocTypes = docTypes.count > 1 || (allDocTypes && docTypes.count > 0);
             boolean checkDocTypes = false;
-            StringBuffer sql = new StringBuffer("SELECT revs.doc_id, sequence, docid, revid, no_attachments, deleted ");
+            StringBuffer sql = new StringBuffer(
+                    "SELECT revs.doc_id, sequence, docid, revid, no_attachments, deleted ");
             if (checkDocTypes)
                 sql.append(", doc_type ");
             sql.append("FROM revs, docs WHERE sequence>? AND current!=0 ");
@@ -356,7 +350,8 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                 boolean deleted = cursor.getInt(5) > 0;
                 String docType = checkDocTypes ? cursor.getString(6) : null;
 
-                while ((keepGoing = cursor.moveToNext()) && (cursor.isNull(0) || cursor.getLong(0) == docID)) {
+                while ((keepGoing = cursor.moveToNext()) &&
+                        (cursor.isNull(0) || cursor.getLong(0) == docID)) {
                     // Skip rows with the same doc_id -- these are losing conflicts.
                     // NOTE: Or Skip rows if 1st column is null
                     // https://github.com/couchbase/couchbase-lite-java-core/issues/497
@@ -379,12 +374,9 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                             // This is the revision that used to be the 'winner'.
                             // Remove its emitted rows:
                             long oldSequence = cursor2.getLong(1);
-                            String[] args = {
-                                    Integer.toString(getViewID()),
-                                    Long.toString(oldSequence)
-                            };
+                            String[] args = {Long.toString(oldSequence)};
                             store.getStorageEngine().execSQL(
-                                    "DELETE FROM maps WHERE view_id=? AND sequence=?", args);
+                                    queryString("DELETE FROM 'maps_#' WHERE sequence=?"), args);
                             if (deleted || RevisionInternal.CBLCompareRevIDs(oldRevId, revId) > 0) {
                                 // It still 'wins' the conflict, so it's the one that
                                 // should be mapped [again], not the current revision!
@@ -405,10 +397,13 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                 }
 
                 String[] selectArgs3 = {Long.toString(sequence)};
-                byte[] json = SQLiteUtils.byteArrayResultForQuery(store.getStorageEngine(), "SELECT json FROM revs WHERE sequence=?", selectArgs3);
+                byte[] json = SQLiteUtils.byteArrayResultForQuery(store.getStorageEngine(),
+                        "SELECT json FROM revs WHERE sequence=?", selectArgs3);
 
+                Log.e("json", "<" + new String(json) + ">");
                 // Get the document properties, to pass to the map function:
-                EnumSet<Database.TDContentOptions> contentOptions = EnumSet.noneOf(Database.TDContentOptions.class);
+                EnumSet<Database.TDContentOptions> contentOptions = EnumSet.noneOf(
+                        Database.TDContentOptions.class);
                 if (noAttachments)
                     contentOptions.add(Database.TDContentOptions.TDNoAttachments);
                 Map<String, Object> properties = store.documentPropertiesFromJSON(
@@ -433,23 +428,27 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
 
             // Finally, record the last revision sequence number that was
             // indexed:
+            int newTotalRows = countTotalRows();
+            ;
             ContentValues updateValues = new ContentValues();
             updateValues.put("lastSequence", dbMaxSequence);
-            updateValues.put("total_docs", countTotalRows());
+            updateValues.put("total_docs", newTotalRows);
             String[] whereArgs = {Integer.toString(getViewID())};
             store.getStorageEngine().update("views", updateValues, "view_id=?", whereArgs);
 
             // FIXME actually count number added :)
-            Log.v(Log.TAG_VIEW, "Finished re-indexing view: %s " + " up to sequence %s", name, dbMaxSequence);
+            Log.v(Log.TAG_VIEW, "Finished re-indexing view: %s " + " up to sequence %s",
+                    name, dbMaxSequence);
             result.setCode(Status.OK);
-        } catch (SQLException e) {
-            throw new CouchbaseLiteException(e, new Status(Status.DB_ERROR));
+        } catch (SQLException ex) {
+            throw new CouchbaseLiteException(ex, new Status(Status.DB_ERROR));
         } finally {
             if (cursor != null) {
                 cursor.close();
             }
             if (!result.isSuccessful()) {
-                Log.w(Log.TAG_VIEW, "Failed to rebuild view %s.  Result code: %d", name, result.getCode());
+                Log.w(Log.TAG_VIEW, "Failed to rebuild view %s.  Result code: %d",
+                        name, result.getCode());
             }
             if (store != null) {
                 store.endTransaction(result.isSuccessful());
@@ -461,17 +460,200 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
      * Queries the view without performing any reducing or grouping.
      */
     @Override
-    public List<QueryRow> regularQuery(QueryOptions options){
-        // TODO: Implement
-        return null;
+    public List<QueryRow> regularQuery(final QueryOptions options) throws CouchbaseLiteException {
+
+        final Predicate<QueryRow> postFilter = options.getPostFilter();
+
+        // TODO
+        // int limit = QueryOptions.QUERY_OPTIONS_DEFAULT_LIMIT;
+        // int skip = 0;
+        if (postFilter != null) {
+            // #574: Custom post-filter means skip/limit apply to the filtered rows, not to the
+            // underlying query, so handle them specially:
+            // TODO
+            //limit = options.getLimit();
+            //skip = options.getSkip();
+            options.setLimit(QueryOptions.QUERY_OPTIONS_DEFAULT_LIMIT);
+            options.setSkip(0);
+        }
+
+        final List<QueryRow> rows = new ArrayList<QueryRow>();
+
+        Status status = runQuery(options, new QueryRowBlock() {
+            @Override
+            public Status onRow(byte[] keyData, byte[] valueData, String docID, Cursor cursor) {
+                JsonDocument keyDoc = new JsonDocument(keyData);
+                JsonDocument valueDoc = new JsonDocument(valueData);
+                long sequence = Long.valueOf(cursor.getString(3));
+                RevisionInternal docRevision = null;
+                if (options.isIncludeDocs()) {
+                    Object valueObject = valueDoc.jsonObject();
+                    String linkedID = null;
+                    if (valueObject instanceof Map)
+                        linkedID = (String) ((Map) valueObject).get("_id");
+                    if (linkedID != null) {
+                        // Linked document: http://wiki.apache.org/couchdb/Introduction_to_CouchDB_views#Linked_documents
+                        String linkedRev = (String) ((Map) valueObject).get("_rev");
+                        docRevision = store.getDocument(
+                                linkedID,
+                                linkedRev,
+                                EnumSet.noneOf(Database.TDContentOptions.class)
+                        );
+                        sequence = docRevision.getSequence();
+                    } else {
+                        String revID = cursor.getString(4);
+                        byte[] json = cursor.getBlob(5);
+                        Map<String, Object> properties = store.documentPropertiesFromJSON(
+                                json,
+                                docID,
+                                revID,
+                                false,
+                                sequence,
+                                options.getContentOptions());
+                        docRevision = store.revision(
+                                docID,    // docID
+                                revID,    // revID
+                                false,    // deleted
+                                sequence, // sequence
+                                properties// properties
+                        );
+                        /*
+                        String revID = cursor.getString(4);
+                        byte[] json = cursor.getBlob(5);
+                        docRevision = store.revision(
+                                docID,    // docID
+                                revID,    // revID
+                                false,    // deleted
+                                sequence, // sequence
+                                json      // json
+                        );
+                        */
+                    }
+                }
+                /*
+                Log.v(TAG, "Query %s: Found row with key=%s, value=%s, id=%s",
+                        name,
+                        new String(keyData),
+                        new String(valueData),
+                        docID);
+                */
+                QueryRow row = new QueryRow(docID, sequence,
+                        keyDoc.jsonObject(), valueDoc.jsonObject(),
+                        docRevision, SQLiteViewStore.this);
+                if (postFilter != null) {
+                    if (!postFilter.apply(row)) {
+                        return new Status(Status.OK);
+                    }
+                    /* TODO
+                    if(skip > 0){
+                        skip--;
+                        return new Status(Status.OK);
+                    }
+                    */
+
+                }
+                rows.add(row);
+
+                /* TODO
+                if(limit-- == 0)
+                    return new Status(0); /// stops the iteration
+                */
+                return new Status(Status.OK);
+            }
+        });
+
+        // If given keys, sort the output into that order, and add entries for missing keys:
+        // TODO
+
+        return rows;
     }
+
     /**
-     *  Queries the view, with reducing or grouping as per the options.
+     * Queries the view, with reducing or grouping as per the options.
+     * in CBL_SQLiteViewStorage.m
+     * - (CBLQueryIteratorBlock) reducedQueryWithOptions: (CBLQueryOptions*)options status: (CBLStatus*)outStatus
      */
     @Override
-    public List<QueryRow> reducedQuery(QueryOptions options){
-        // TODO: Implement
-        return null;
+    public List<QueryRow> reducedQuery(QueryOptions options) throws CouchbaseLiteException {
+        final Predicate<QueryRow> postFilter = options.getPostFilter();
+
+        final int groupLevel = options.getGroupLevel();
+        final boolean group = options.isGroup() || (groupLevel > 0);
+        final Reducer reduce = delegate.getReduce();
+        if (options.isReduceSpecified()) {
+            if (options.isReduce() && reduce == null) {
+                Log.w(TAG, String.format(
+                        "Cannot use reduce option in view %s which has no reduce block defined",
+                        name));
+                throw new CouchbaseLiteException(new Status(Status.BAD_PARAM));
+            }
+        }
+
+        final List<Object> keysToReduce = new ArrayList<Object>(REDUCE_BATCH_SIZE);
+        final List<Object> valuesToReduce = new ArrayList<Object>(REDUCE_BATCH_SIZE);
+        final Object[] lastKeys = new Object[1];
+        lastKeys[0] = null;
+        final SQLiteViewStore that = this;
+
+        final List<QueryRow> rows = new ArrayList<QueryRow>();
+
+        Status status = runQuery(options, new QueryRowBlock() {
+            @Override
+            public Status onRow(byte[] keyData, byte[] valueData, String docID, Cursor cursor) {
+                JsonDocument keyDoc = new JsonDocument(keyData);
+                JsonDocument valueDoc = new JsonDocument(valueData);
+                assert (keyDoc != null);
+                Object keyObject = keyDoc.jsonObject();
+                if (group && !groupTogether(keyObject, lastKeys[0], groupLevel)) {
+                    if (lastKeys[0] != null) {
+                        // This pair starts a new group, so reduce & record the last one:
+                        Object key = groupKey(lastKeys[0], groupLevel);
+                        Object reduced = (reduce != null) ?
+                                reduce.reduce(keysToReduce, valuesToReduce, false) :
+                                null;
+                        QueryRow row = new QueryRow(null, 0, key, reduced, null, that);
+                        if (postFilter == null || postFilter.apply(row))
+                            rows.add(row);
+                        keysToReduce.clear();
+                        valuesToReduce.clear();
+                    }
+                    lastKeys[0] = keyObject;
+                }
+                //Log.v(TAG, String.format("Query %s: Will reduce row with key=%s, value=%s",
+                //        name, new String(keyData), new String(valueData)));
+
+                /*
+                Object valueOrData = valueData;
+                if(reduce != null && rowValueIsEntireDoc(valueData)){
+                    // map fn emitted 'doc' as value, which was stored as a "*" placeholder; expand now:
+                    long sequence = Long.valueOf(cursor.getString(3));
+                    RevisionInternal rev = store.getDocument(docID, sequence);
+                    if(rev == null)
+                        Log.w(TAG, String.format("%s: Couldn't load doc for row value", this));
+                    else
+                        valueOrData = rev.getProperties();
+                }
+                */
+                keysToReduce.add(keyObject);
+                valuesToReduce.add(valueDoc.jsonObject());
+                return new Status(Status.OK);
+            }
+        });
+
+        if (keysToReduce != null && keysToReduce.size() > 0) {
+            // Finish the last group (or the entire list, if no grouping):
+            Object key = group ? groupKey(lastKeys[0], groupLevel) : null;
+            Object reduced = (reduce != null) ?
+                    reduce.reduce(keysToReduce, valuesToReduce, false) :
+                    null;
+            Log.v(TAG, String.format("Query %s: Reduced to key=%s, value=%s",
+                    name, key, reduced));
+            QueryRow row = new QueryRow(null, 0, key, reduced, null, that);
+            if (postFilter == null || postFilter.apply(row)) {
+                rows.add(row);
+            }
+        }
+        return rows;
     }
 
     @Override
@@ -503,104 +685,15 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
     }
 
     @Override
-    public List<QueryRow> queryWithOptions(QueryOptions options) throws CouchbaseLiteException {
-
-        if (options == null) {
-            options = new QueryOptions();
-        }
-
-        Cursor cursor = null;
-        List<QueryRow> rows = new ArrayList<QueryRow>();
-        Predicate<QueryRow> postFilter = options.getPostFilter();
-
-        try {
-            cursor = resultSetWithOptions(options);
-            int groupLevel = options.getGroupLevel();
-            boolean group = options.isGroup() || (groupLevel > 0);
-            boolean reduce = options.isReduce() || group;
-
-            if (reduce && (delegate.getReduce() == null) && !group) {
-                Log.w(Log.TAG_VIEW, "Cannot use reduce option in view %s which has no reduce block defined", name);
-                throw new CouchbaseLiteException(new Status(Status.BAD_REQUEST));
-            }
-
-            if (reduce || group) {
-                // Reduced or grouped query:
-                rows = reducedQuery(cursor, group, groupLevel, postFilter);
-            } else {
-                // regular query
-                cursor.moveToNext();
-                while (!cursor.isAfterLast()) {
-                    JsonDocument keyDoc = new JsonDocument(cursor.getBlob(0));
-                    JsonDocument valueDoc = new JsonDocument(cursor.getBlob(1));
-                    String docId = cursor.getString(2);
-                    int sequence = Integer.valueOf(cursor.getString(3));
-                    Map<String, Object> docContents = null;
-                    if (options.isIncludeDocs()) {
-                        Object valueObject = valueDoc.jsonObject();
-                        // http://wiki.apache.org/couchdb/Introduction_to_CouchDB_views#Linked_documents
-                        if (valueObject instanceof Map && ((Map) valueObject).containsKey("_id")) {
-                            String linkedDocId = (String) ((Map) valueObject).get("_id");
-                            RevisionInternal linkedDoc = store.getDocument(
-                                    linkedDocId,
-                                    null,
-                                    EnumSet.noneOf(Database.TDContentOptions.class)
-                            );
-                            if (linkedDoc != null) {
-                                docContents = linkedDoc.getProperties();
-                            }
-                        } else {
-                            docContents = store.documentPropertiesFromJSON(
-                                    cursor.getBlob(5),
-                                    docId,
-                                    cursor.getString(4),
-                                    false,
-                                    cursor.getLong(3),
-                                    options.getContentOptions()
-                            );
-                        }
-                    }
-                    QueryRow row = new QueryRow(docId, sequence, keyDoc.jsonObject(), valueDoc.jsonObject(), docContents, this);
-                    //row.setDatabase(database);
-                    if (postFilter == null || postFilter.apply(row)) {
-                        rows.add(row);
-                    }
-                    cursor.moveToNext();
-                }
-            }
-
-        } catch (SQLException e) {
-            String errMsg = String.format("Error querying view: %s", this);
-            Log.e(Log.TAG_VIEW, errMsg, e);
-            throw new CouchbaseLiteException(errMsg, e, new Status(Status.DB_ERROR));
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-
-        return rows;
-    }
-
-    @Override
     public List<Map<String, Object>> dump() {
-        if (getViewID() < 0) {
+        if (getViewID() < 0)
             return null;
-        }
-
-        String[] selectArgs = {Integer.toString(getViewID())};
+        List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
+        String sql = "SELECT sequence, key, value FROM 'maps_#' ORDER BY key";
         Cursor cursor = null;
-        List<Map<String, Object>> result = null;
-
         try {
-            cursor = store
-                    .getStorageEngine()
-                    .rawQuery(
-                            "SELECT sequence, key, value FROM maps WHERE view_id=? ORDER BY key",
-                            selectArgs);
-
+            cursor = store.getStorageEngine().rawQuery(queryString(sql), null);
             cursor.moveToNext();
-            result = new ArrayList<Map<String, Object>>();
             while (!cursor.isAfterLast()) {
                 Map<String, Object> row = new HashMap<String, Object>();
                 row.put("seq", cursor.getInt(0));
@@ -609,13 +702,9 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
                 result.add(row);
                 cursor.moveToNext();
             }
-        } catch (SQLException e) {
-            Log.e(Log.TAG_VIEW, "Error dumping view", e);
-            return null;
         } finally {
-            if (cursor != null) {
+            if (cursor != null)
                 cursor.close();
-            }
         }
         return result;
     }
@@ -626,8 +715,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
 
     @Override
     public boolean rowValueIsEntireDoc(byte[] valueData) {
-        // TODO: Implement
-        return false;
+        return valueData.length == 1 && (new String(valueData)).equals("*");
     }
 
     @Override
@@ -647,38 +735,44 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
     // Internal (Private) Instance Methods
     ///////////////////////////////////////////////////////////////////////////
 
-    private Cursor resultSetWithOptions(QueryOptions options) {
-        if (options == null) {
+    // pragma mark - QUERYING:
+
+    /**
+     * Generates and runs the SQL SELECT statement for a view query, calling the onRow callback.
+     * in CBL_SQLiteViewStorage.m
+     * - (CBLStatus) _runQueryWithOptions: (const CBLQueryOptions*)options onRow: (QueryRowBlock)onRow
+     */
+    private Status runQuery(QueryOptions options, QueryRowBlock block) {
+        if (options == null)
             options = new QueryOptions();
-        }
 
         // OPT: It would be faster to use separate tables for raw-or ascii-collated views so that
         // they could be indexed with the right collation, instead of having to specify it here.
         String collationStr = "";
-        if (collation == View.TDViewCollation.TDViewCollationASCII) {
+        if (collation == View.TDViewCollation.TDViewCollationASCII)
             collationStr += " COLLATE JSON_ASCII";
-        } else if (collation == View.TDViewCollation.TDViewCollationRaw) {
+        else if (collation == View.TDViewCollation.TDViewCollationRaw)
             collationStr += " COLLATE JSON_RAW";
-        }
 
-        String sql = "SELECT key, value, docid, revs.sequence";
+
+        StringBuffer sql = new StringBuffer("SELECT key, value, docid, revs.sequence");
         if (options.isIncludeDocs()) {
-            sql = sql + ", revid, json";
+            sql.append(", revid, json");
         }
-        sql = sql + " FROM maps, revs, docs WHERE maps.view_id=?";
+        sql.append(String.format(" FROM 'maps_%s', revs, docs", mapTableName()));
+        sql.append(" WHERE 1");
 
         List<String> argsList = new ArrayList<String>();
-        argsList.add(Integer.toString(getViewID()));
 
         if (options.getKeys() != null) {
-            sql += " AND key in (";
+            sql.append(" AND key in (");
             String item = "?";
             for (Object key : options.getKeys()) {
-                sql += item;
+                sql.append(item);
                 item = ", ?";
                 argsList.add(toJSONString(key));
             }
-            sql += ")";
+            sql.append(")");
         }
 
         Object minKey = options.getStartKey();
@@ -699,17 +793,13 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
         }
 
         if (minKey != null) {
-            if (inclusiveMin) {
-                sql += " AND key >= ?";
-            } else {
-                sql += " AND key > ?";
-            }
-            sql += collationStr;
             String minKeyJSON = toJSONString(minKey);
+            sql.append(inclusiveMin ? " AND key >= ?" : " AND key > ?");
+            sql.append(collationStr);
             argsList.add(minKeyJSON);
             if (minKeyDocId != null && inclusiveMin) {
                 //OPT: This calls the JSON collator a 2nd time unnecessarily.
-                sql += String.format(" AND (key > ? %s OR docid >= ?)", collationStr);
+                sql.append(String.format(" AND (key > ? %s OR docid >= ?)", collationStr));
                 argsList.add(minKeyJSON);
                 argsList.add(minKeyDocId);
             }
@@ -717,38 +807,58 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
 
         if (maxKey != null) {
             maxKey = View.keyForPrefixMatch(maxKey, options.getPrefixMatchLevel());
-            if (inclusiveMax) {
-                sql += " AND key <= ?";
-            } else {
-                sql += " AND key < ?";
-            }
-            sql += collationStr;
             String maxKeyJSON = toJSONString(maxKey);
+            sql.append(inclusiveMax ? " AND key <= ?" : " AND key < ?");
+            sql.append(collationStr);
             argsList.add(maxKeyJSON);
             if (maxKeyDocId != null && inclusiveMax) {
-                sql += String.format(" AND (key < ? %s OR docid <= ?)", collationStr);
+                sql.append(String.format(" AND (key < ? %s OR docid <= ?)", collationStr));
                 argsList.add(maxKeyJSON);
                 argsList.add(maxKeyDocId);
             }
         }
 
-        sql = sql
-                + " AND revs.sequence = maps.sequence AND docs.doc_id = revs.doc_id ORDER BY key";
-        sql += collationStr;
-
+        sql.append(String.format(
+                " AND revs.sequence = 'maps_%s'.sequence AND docs.doc_id = revs.doc_id ORDER BY key",
+                mapTableName()));
+        sql.append(collationStr);
         if (options.isDescending()) {
-            sql = sql + " DESC";
+            sql.append(" DESC");
         }
+        sql.append(options.isDescending() ? ", docid DESC" : ", docid");
 
-        sql = sql + " LIMIT ? OFFSET ?";
+        sql.append(" LIMIT ? OFFSET ?");
         argsList.add(Integer.toString(options.getLimit()));
         argsList.add(Integer.toString(options.getSkip()));
 
-        Log.v(Log.TAG_VIEW, "Query %s: %s | args: %s", name, sql, argsList);
+        Log.v(Log.TAG_VIEW, "Query %s: %s | args: %s", name, sql.toString(), argsList);
 
-        Cursor cursor = store.getStorageEngine().rawQuery(sql,
-                argsList.toArray(new String[argsList.size()]));
-        return cursor;
+        Status status = new Status(Status.OK);
+        Cursor cursor = null;
+        try {
+            cursor = store.getStorageEngine().rawQuery(sql.toString(),
+                    argsList.toArray(new String[argsList.size()]));
+            // regular query
+            cursor.moveToNext();
+            while (!cursor.isAfterLast()) {
+                // Call the block!
+                byte[] keyData = cursor.getBlob(0);
+                byte[] valueData = cursor.getBlob(1);
+                String docID = cursor.getString(2);
+                status = block.onRow(keyData, valueData, docID, cursor);
+                if (status.isError())
+                    break;
+                else if (status.getCode() <= 0) {
+                    status = new Status(Status.OK);
+                    break;
+                }
+                cursor.moveToNext();
+            }
+        } finally {
+            if (cursor != null)
+                cursor.close();
+        }
+        return status;
     }
 
     private String toJSONString(Object object) {
@@ -764,105 +874,29 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
         return result;
     }
 
-    private List<QueryRow> reducedQuery(Cursor cursor,
-                                        boolean group,
-                                        int groupLevel,
-                                        Predicate<QueryRow> postFilter)
-            throws CouchbaseLiteException {
-
-        List<Object> keysToReduce = new ArrayList<Object>(REDUCE_BATCH_SIZE);
-        List<Object> valuesToReduce = new ArrayList<Object>(REDUCE_BATCH_SIZE);
-        Object lastKey = null;
-        List<QueryRow> rows = new ArrayList<QueryRow>();
-
-        cursor.moveToNext();
-        while (!cursor.isAfterLast()) {
-            JsonDocument keyDoc = new JsonDocument(cursor.getBlob(0));
-            JsonDocument valueDoc = new JsonDocument(cursor.getBlob(1));
-            assert (keyDoc != null);
-
-            Object keyObject = keyDoc.jsonObject();
-            if (group && !groupTogether(keyObject, lastKey, groupLevel)) {
-                if (lastKey != null) {
-                    // This pair starts a new group, so reduce & record the last one:
-                    Object reduced = (delegate.getReduce() != null) ? delegate.getReduce().reduce(keysToReduce, valuesToReduce, false) : null;
-                    Object key = View.groupKey(lastKey, groupLevel);
-                    QueryRow row = new QueryRow(null, 0, key, reduced, null, this);
-                    //row.setDatabase(database);
-                    if (postFilter == null || postFilter.apply(row)) {
-                        rows.add(row);
-                    }
-                    keysToReduce.clear();
-                    valuesToReduce.clear();
-                }
-                lastKey = keyObject;
-            }
-            if (keysToReduce == null) {
-                //with group, no reduce
-                keysToReduce = new ArrayList<Object>();
-            }
-            if (valuesToReduce == null) {
-                //with group, no reduce
-                valuesToReduce = new ArrayList<Object>();
-            }
-            keysToReduce.add(keyObject);
-            valuesToReduce.add(valueDoc.jsonObject());
-            cursor.moveToNext();
-        }
-
-        if (keysToReduce != null && keysToReduce.size() > 0) {
-            // Finish the last group (or the entire list, if no grouping):
-            Object key = group ? View.groupKey(lastKey, groupLevel) : null;
-            Object reduced = (delegate.getReduce() != null) ? delegate.getReduce().reduce(keysToReduce, valuesToReduce, false) : null;
-            QueryRow row = new QueryRow(null, 0, key, reduced, null, this);
-            //row.setDatabase(database);
-            if (postFilter == null || postFilter.apply(row)) {
-                rows.add(row);
-            }
-        }
-        return rows;
-    }
-
-    private int countTotalRows() {
-        int totalRows = -1;
-        String sql = "SELECT COUNT(view_id) FROM maps WHERE view_id=?";
-        String[] args = {String.valueOf(viewID)};
-        Cursor cursor = null;
-        try {
-            cursor = store.getStorageEngine().rawQuery(sql, args);
-            if (cursor.moveToNext()) {
-                totalRows = cursor.getInt(0);
-            }
-        } catch (SQLException e) {
-            Log.e(Log.TAG_VIEW, "Error getting total_docs", e);
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-        return totalRows;
-    }
-
     private void updateTotalRows(int totalRows) {
         ContentValues values = new ContentValues();
         values.put("total_docs=", totalRows);
-        store.getStorageEngine().update("views", values, "view_id=?", new String[]{String.valueOf(getViewID())});
+        store.getStorageEngine().update("views", values, "view_id=?",
+                new String[]{String.valueOf(getViewID())});
     }
 
     private String mapTableName() {
-        if(_mapTableName == null){
+        if (_mapTableName == null) {
             _mapTableName = String.format("%d", getViewID());
         }
         return _mapTableName;
     }
+
     /**
      * The name of the map table is dynamic, based on the ID of the view. This method replaces a '#'
      * with the view ID in a query string.
      */
-    private String queryString(String sql){
+    private String queryString(String sql) {
         return sql.replaceAll("#", mapTableName());
     }
-    private boolean runStatements(final String sql){
+
+    private boolean runStatements(final String sql) {
         final SQLiteStore db = store;
         return db.runInTransaction(new TransactionalTask() {
             @Override
@@ -875,24 +909,15 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
         });
     }
 
-    private void createIndex(){
+    private void createIndex() {
         String sql = "CREATE TABLE IF NOT EXISTS 'maps_#' (" +
                 "sequence INTEGER NOT NULL REFERENCES revs(sequence) ON DELETE CASCADE," +
                 "key TEXT NOT NULL COLLATE JSON," +
                 "value TEXT)";
-        if(!runStatements(sql))
+        if (!runStatements(sql))
             Log.w(TAG, "Couldn't create view index `%s`", name);
     }
-    /*
-    public void deleteIndex(){
-        if (getViewID() <= 0)
-            return;
-        String sql = "DROP TABLE IF EXISTS 'maps_#'; " +
-                "UPDATE views SET lastSequence=0, total_docs=0 WHERE view_id=#";
-        if(!runStatements(sql))
-            Log.w(TAG, "Couldn't delete view index `%s`", name);
-    }
-    */
+
 
     ///////////////////////////////////////////////////////////////////////////
     // Internal (Private) Static Methods
@@ -902,7 +927,7 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
      * Are key1 and key2 grouped together at this groupLevel?
      */
     private static boolean groupTogether(Object key1, Object key2, int groupLevel) {
-    if (groupLevel == 0 || !(key1 instanceof List) || !(key2 instanceof List)) {
+        if (groupLevel == 0 || !(key1 instanceof List) || !(key2 instanceof List)) {
             return key1.equals(key2);
         }
         @SuppressWarnings("unchecked")
@@ -912,7 +937,8 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
 
         // if either key list is smaller than groupLevel and the key lists are different
         // sizes, they cannot be equal.
-        if ((key1List.size() < groupLevel || key2List.size() < groupLevel) && key1List.size() != key2List.size()) {
+        if ((key1List.size() < groupLevel || key2List.size() < groupLevel) &&
+                key1List.size() != key2List.size()) {
             return false;
         }
 
@@ -923,5 +949,16 @@ public class SQLiteViewStore implements ViewStore, QueryRowStore {
             }
         }
         return true;
+    }
+
+    /**
+     * Returns the prefix of the key to use in the result row, at this groupLevel
+     */
+    public static Object groupKey(Object key, int groupLevel) {
+        if (groupLevel > 0 && (key instanceof List) && (((List<Object>) key).size() > groupLevel)) {
+            return ((List<Object>) key).subList(0, groupLevel);
+        } else {
+            return key;
+        }
     }
 }

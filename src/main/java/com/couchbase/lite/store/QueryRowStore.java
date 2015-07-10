@@ -1,3 +1,9 @@
+//
+//  QueryRowStore.java
+//
+//  Created by Hideki Itakura on 6/23/15.
+//  Copyright (c) 2015 Couchbase, Inc All rights reserved.
+//
 package com.couchbase.lite.store;
 
 import java.util.Map;
@@ -18,9 +24,9 @@ public interface QueryRowStore {
     /**
      * Fetches a document's body; called when the row value represents the entire document.
      *
-     * @param docID  The document ID
-     * @param sequence  The sequence representing this revision
-     * @return  The document properties, or nil on error
+     * @param docID    The document ID
+     * @param sequence The sequence representing this revision
+     * @return The document properties, or nil on error
      */
     Map<String, Object> getDocumentProperties(String docID, long sequence);
 }

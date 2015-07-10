@@ -74,6 +74,7 @@ public interface Store {
      * it should be pruned. This will be set soon after the -openInDirectory call.
      */
     void setMaxRevTreeDepth(int maxRevTreeDepth);
+
     int getMaxRevTreeDepth();
 
     /**
@@ -140,7 +141,8 @@ public interface Store {
      * @return The revision, or nil if not found.
      * @throws CouchbaseLiteException
      */
-    //RevisionInternal getDocument(String docID, String revID, boolean withBody) throws CouchbaseLiteException;
+    //RevisionInternal getDocument(String docID, String revID, boolean withBody)
+    // throws CouchbaseLiteException;
     RevisionInternal getDocument(String docID,
                                  String revID,
                                  EnumSet<Database.TDContentOptions> contentOptions);
@@ -227,7 +229,7 @@ public interface Store {
      * Iterates over all documents in the database, according to the given query options.
      */
     //List<QueryRow> getAllDocs(QueryOptions options) throws CouchbaseLiteException;
-    Map<String,Object> getAllDocs(QueryOptions options) throws CouchbaseLiteException;
+    Map<String, Object> getAllDocs(QueryOptions options) throws CouchbaseLiteException;
 
     /**
      * Returns all database changes with sequences greater than `lastSequence`.
@@ -238,7 +240,8 @@ public interface Store {
      *                     and those for which it returns NO will be skipped.
      * @return The list of CBL_Revisions
      */
-    //RevisionList changesSince(long lastSequence, ChangesOptions options, RevisionFilter filter) throws CouchbaseLiteException;
+    //RevisionList changesSince(long lastSequence, ChangesOptions options, RevisionFilter filter)
+    // throws CouchbaseLiteException;
     RevisionList changesSince(long lastSequence,
                               ChangesOptions options,
                               ReplicationFilter filter,
@@ -364,30 +367,57 @@ public interface Store {
      * @return The new revision, with revID filled in, or nil on error.
      * @throws CouchbaseLiteException
      */
-    //RevisionInternal putLocalRevision(RevisionInternal revision, String prevRevID, boolean obeyMVCC) throws CouchbaseLiteException;
-    RevisionInternal putLocalRevision(RevisionInternal revision, String prevRevID) throws CouchbaseLiteException;
+    //RevisionInternal putLocalRevision(RevisionInternal revision, String prevRevID, boolean obeyMVCC)
+    // throws CouchbaseLiteException;
+    RevisionInternal putLocalRevision(RevisionInternal revision, String prevRevID)
+            throws CouchbaseLiteException;
 
     ///////////////////////////////////////////////////////////////////////////
     // temporary from here
     ///////////////////////////////////////////////////////////////////////////
 
     SQLiteStorageEngine getStorageEngine();
+
     boolean beginTransaction();
+
     boolean endTransaction(boolean commit);
+
     void optimizeSQLIndexes();
+
     String publicUUID();
+
     String privateUUID();
-    Map<String, Object> getAttachmentsDictForSequenceWithContent(long sequence, EnumSet<Database.TDContentOptions> contentOptions);
+
+    Map<String, Object> getAttachmentsDictForSequenceWithContent(long sequence,
+                                                                 EnumSet<Database.TDContentOptions> contentOptions);
+
     RevisionList getAllRevisions(String docId, long docNumericID, boolean onlyCurrent);
+
     long getDocNumericID(String docId);
+
     Status garbageCollectAttachments();
-    String winningRevIDOfDoc(long docNumericId, AtomicBoolean outIsDeleted, AtomicBoolean outIsConflict) throws CouchbaseLiteException;
+
+    String winningRevIDOfDoc(long docNumericId, AtomicBoolean outIsDeleted, AtomicBoolean outIsConflict)
+            throws CouchbaseLiteException;
+
     boolean existsDocumentWithIDAndRev(String docId, String revId);
-    void copyAttachmentNamedFromSequenceToSequence(String name, long fromSeq, long toSeq) throws CouchbaseLiteException;
+
+    void copyAttachmentNamedFromSequenceToSequence(String name, long fromSeq, long toSeq)
+            throws CouchbaseLiteException;
+
     void deleteLocalDocument(String docID, String revID) throws CouchbaseLiteException;
+
     boolean replaceUUIDs();
-    Map<String, Object> documentPropertiesFromJSON(byte[] json, String docId, String revId, boolean deleted, long sequence, EnumSet<Database.TDContentOptions> contentOptions);
+
+    Map<String, Object> documentPropertiesFromJSON(byte[] json,
+                                                   String docId,
+                                                   String revId,
+                                                   boolean deleted,
+                                                   long sequence,
+                                                   EnumSet<Database.TDContentOptions> contentOptions);
+
     Attachment getAttachmentForSequence(long sequence, String filename) throws CouchbaseLiteException;
+
     String getAttachmentPathForSequence(long sequence, String filename) throws CouchbaseLiteException;
 
     /**

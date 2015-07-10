@@ -12,7 +12,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Storage for a view. Instances are created by Storage implementations, and are owned by View instances.
+ * Storage for a view. Instances are created by Storage implementations,
+ * and are owned by View instances.
  */
 public interface ViewStore {
     /**
@@ -45,7 +46,7 @@ public interface ViewStore {
     /**
      * Updates the version of the view. A change in version means the delegate's map block has
      * changed its semantics, so the index should be deleted.
-     * */
+     */
     boolean setVersion(String version);
 
     /**
@@ -65,7 +66,8 @@ public interface ViewStore {
 
     /**
      * Updates the indexes of one or more views in parallel.
-     * @param views views  An array of CBL_ViewStorage instances, always including the receiver.
+     *
+     * @param views  An array of CBL_ViewStorage instances, always including the receiver.
      * @throws CouchbaseLiteException
      */
     //void updateIndexes(List<ViewStorage> views) throws CouchbaseLiteException;
@@ -74,12 +76,12 @@ public interface ViewStore {
     /**
      * Queries the view without performing any reducing or grouping.
      */
-    List<QueryRow> regularQuery(QueryOptions options);
+    List<QueryRow> regularQuery(QueryOptions options) throws CouchbaseLiteException;
 
     /**
-     *  Queries the view, with reducing or grouping as per the options.
+     * Queries the view, with reducing or grouping as per the options.
      */
-    List<QueryRow> reducedQuery(QueryOptions options);
+    List<QueryRow> reducedQuery(QueryOptions options) throws CouchbaseLiteException;
 
     QueryRowStore storageForQueryRow(QueryRow row);
 
@@ -88,8 +90,9 @@ public interface ViewStore {
      */
     List<Map<String, Object>> dump();
 
-    // TODO: Not sure if this is required, review latoer
+    // TODO: Not sure if this is required, review later
     int getViewID();
-    List<QueryRow> queryWithOptions(QueryOptions options) throws CouchbaseLiteException;
+
+    //List<QueryRow> queryWithOptions(QueryOptions options) throws CouchbaseLiteException;
     void setCollation(View.TDViewCollation collation);
 }
