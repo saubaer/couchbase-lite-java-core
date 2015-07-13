@@ -26,6 +26,7 @@ import com.couchbase.lite.replicator.ReplicationState;
 import com.couchbase.lite.storage.SQLException;
 import com.couchbase.lite.storage.SQLiteStorageEngine;
 import com.couchbase.lite.store.SQLiteStore;
+import com.couchbase.lite.store.StorageValidation;
 import com.couchbase.lite.store.Store;
 import com.couchbase.lite.store.StoreDelegate;
 import com.couchbase.lite.support.Base64;
@@ -34,6 +35,7 @@ import com.couchbase.lite.support.HttpClientFactory;
 import com.couchbase.lite.support.PersistentCookieStore;
 import com.couchbase.lite.support.RevisionUtils;
 import com.couchbase.lite.util.CollectionUtils;
+import com.couchbase.lite.util.CollectionUtils.Functor;
 import com.couchbase.lite.util.Log;
 import com.couchbase.lite.util.StreamUtils;
 
@@ -714,8 +716,7 @@ public final class Database implements StoreDelegate {
      */
     @InterfaceAudience.Private
     public String generateRevID(byte[] json, boolean deleted, String prevRevID){
-        // TODO
-        return null;
+        return RevisionUtils.generateRevID(json, deleted, prevRevID);
     }
 
     @InterfaceAudience.Private
@@ -846,6 +847,69 @@ public final class Database implements StoreDelegate {
     }
 
     /**
+     * Given a revision, updates its _attachments dictionary for storage in the database.
+     */
+    private boolean processAttachmentsForRevision(RevisionInternal rev, List<String> ancestry, final Status outStatus) {
+        Map<String, Object> revAttachments = rev.getAttachments();
+        if (revAttachments == null)
+            return true;  // no-op: no attachments
+
+        // Deletions can't have attachments:
+        if (rev.isDeleted() || revAttachments.size() == 0) {
+            Map<String, Object> body = rev.getProperties();
+            body.remove("_attachments");
+            rev.setProperties(body);
+            return true;
+        }
+
+        String prevRevID = (ancestry.size() > 0) ? ancestry.get(0) : null;
+        final int generation = Revision.generationFromRevID(prevRevID) + 1;
+        final Map<String, Map<String, Object>> parentAttachments = new HashMap<String, Map<String, Object>>();
+
+        rev.mutateAttachments(new Functor<Map<String, Object>, Map<String, Object>>() {
+            public Map<String, Object> invoke(Map<String, Object> attachInfo) {
+
+                String name = (String)attachInfo.get("name");
+                AttachmentInternal attachment = new AttachmentInternal(name, attachInfo);
+                if (attachment == null) {
+                    return null;
+                //}else if(attachment.encodedContent){
+                } else if (attachInfo.containsKey("follows") && ((Boolean) attachInfo.get("follows")).booleanValue()) {
+                    // "follows" means the uploader provided the attachment in a separate MIME part.
+                    // This means it's already been registered in _pendingAttachmentsByDigest;
+                    // I just need to look it up by its "digest" property and install it into the store:
+
+                    // TODO
+                } else if (attachInfo.containsKey("stub") && ((Boolean) attachInfo.get("stub")).booleanValue()) {
+                    // "stub" on an incoming revision means the attachment is the same as in the parent.
+
+                    // TODO
+
+                    Map<String, Object> parentAttachment = parentAttachments.get(name);
+                    if (parentAttachment == null) {
+                        outStatus.setCode(Status.BAD_ATTACHMENT);
+                        return null;
+                    }
+                    return parentAttachment;
+                }
+
+                // Set or validate the revpos:
+                if (attachment.getRevpos() == 0) {
+                    attachment.setRevpos(generation);
+                } else if (attachment.getRevpos() > generation) {
+                    Log.w(Database.TAG, "Attachment %s has unexpected revpos %d, setting to %d", name, attachment.getRevpos(), generation);
+                    attachment.setRevpos(generation);
+                }
+                assert(attachment.isValid());
+                return attachment.asStubDictionary();
+            }
+        });
+
+
+        return !outStatus.isError();
+    }
+
+    /**
      * Given a newly-added revision, adds the necessary attachment rows to the sqliteDb and
      * stores inline attachments into the blob store.
      */
@@ -913,50 +977,6 @@ public final class Database implements StoreDelegate {
                 return attachment;
             }
         });
-    }
-
-    /**
-     * in CBLDatabase+Insertion.m
-     * - (CBL_Revision*) winnerWithDocID: (SInt64)docNumericID
-     * oldWinner: (NSString*)oldWinningRevID
-     * oldDeleted: (BOOL)oldWinnerWasDeletion
-     * newRev: (CBL_Revision*)newRev
-     */
-    @InterfaceAudience.Private
-    public RevisionInternal winner(long docNumericID,
-                                   String oldWinningRevID,
-                                   boolean oldWinnerWasDeletion,
-                                   RevisionInternal newRev) throws CouchbaseLiteException {
-
-        if (oldWinningRevID == null) {
-            return newRev;
-        }
-        String newRevID = newRev.getRevId();
-        if (!newRev.isDeleted()) {
-            if (oldWinnerWasDeletion ||
-                    RevisionInternal.CBLCompareRevIDs(newRevID, oldWinningRevID) > 0) {
-                return newRev; // this is now the winning live revision
-            }
-        } else if (oldWinnerWasDeletion) {
-            if (RevisionInternal.CBLCompareRevIDs(newRevID, oldWinningRevID) > 0) {
-                return newRev;  // doc still deleted, but this beats previous deletion rev
-            }
-        } else {
-            // Doc was alive. How does this deletion affect the winning rev ID?
-            AtomicBoolean outIsDeleted = new AtomicBoolean(false);
-            AtomicBoolean outIsConflict = new AtomicBoolean(false);
-            String winningRevID = winningRevIDOfDoc(docNumericID, outIsDeleted, outIsConflict);
-            if (!winningRevID.equals(oldWinningRevID)) {
-                if (winningRevID.equals(newRev.getRevId())) {
-                    return newRev;
-                } else {
-                    boolean deleted = false;
-                    RevisionInternal winningRev = new RevisionInternal(newRev.getDocId(), winningRevID, deleted);
-                    return winningRev;
-                }
-            }
-        }
-        return null; // no change
     }
 
     @InterfaceAudience.Private
@@ -1177,11 +1197,13 @@ public final class Database implements StoreDelegate {
         return store == null ? null : store.loadRevisionBody(rev, contentOptions);
     }
 
+    /*
     // Note: unit test only
     @InterfaceAudience.Private
     public long getDocNumericID(String docId) {
         return store == null ? null : store.getDocNumericID(docId);
     }
+    */
 
     /**
      * NOTE: This method is internal use only (from BulkDownloader and PullerInternal)
@@ -1418,7 +1440,7 @@ public final class Database implements StoreDelegate {
                 try {
                     loadRevisionBody(oldRev, EnumSet.noneOf(TDContentOptions.class));
                 } catch (CouchbaseLiteException e) {
-                    if (e.getCBLStatus().getCode() == Status.NOT_FOUND && store.existsDocumentWithIDAndRev(docID, null)) {
+                    if (e.getCBLStatus().getCode() == Status.NOT_FOUND && store.existsDocument(docID, null)) {
                         throw new CouchbaseLiteException(Status.CONFLICT);
                     }
                 }
@@ -1488,11 +1510,6 @@ public final class Database implements StoreDelegate {
         getPendingAttachmentsByDigest().putAll(blobsByDigest);
     }
 
-    @InterfaceAudience.Private
-    public static String generateDocumentId() {
-        return Misc.CreateUUID();
-    }
-
     /**
      * Parses the _revisions dict from a document into an array of revision ID strings
      */
@@ -1535,8 +1552,72 @@ public final class Database implements StoreDelegate {
      * NOTE: Called by Internal and Unit Tests
      */
     @InterfaceAudience.Private
-    public RevisionInternal putRevision(RevisionInternal oldRev, String prevRevId, boolean allowConflict, Status resultStatus) throws CouchbaseLiteException {
-        return store == null ? null : store.putRevision(oldRev, prevRevId, allowConflict, resultStatus);
+    public RevisionInternal putRevision(RevisionInternal putRev,
+                                        String inPrevRevID,
+                                        boolean allowConflict,
+                                        Status outStatus)
+            throws CouchbaseLiteException {
+        return put(putRev.getDocId(), putRev.getProperties(), inPrevRevID, allowConflict, null, outStatus);
+    }
+
+    public RevisionInternal put(String docID,
+                                Map<String, Object> properties,
+                                String prevRevID,
+                                boolean allowConflict,
+                                URL source,
+                                Status outStatus){
+
+        boolean deleting = properties == null ||
+                (properties.containsKey("_deleted") &&
+                        ((Boolean)properties.get("_deleted")).booleanValue());
+
+        // Attachments
+        if (properties != null && properties.containsKey("_attachments")) {
+            RevisionInternal tmpRev = new RevisionInternal(docID, prevRevID, deleting);
+            tmpRev.setProperties(properties);
+            List<String> ancestry = new ArrayList<String>();
+            if (prevRevID != null)
+                ancestry.add(prevRevID);
+            if (!processAttachmentsForRevision(tmpRev, ancestry, outStatus)) {
+                return null;
+            }
+            properties = tmpRev.getProperties();
+        }
+
+        // TODO: Need to implement Shared (Manager.shared)
+        StorageValidation validationBlock = null;
+        if(validations != null && validations.size() > 0) {
+            validationBlock = new StorageValidation() {
+                @Override
+                public Status validate(RevisionInternal newRev, RevisionInternal prevRev, String parentRevID) {
+                    try {
+                        validateRevision(newRev, prevRev,parentRevID);
+                    } catch (CouchbaseLiteException e) {
+                        return new Status(Status.FORBIDDEN);
+                    }
+                    return new Status(Status.OK);
+                }
+            };
+        }
+
+        RevisionInternal putRev = null;
+        try {
+            putRev = store.add(
+                    docID,
+                    prevRevID,
+                    properties,
+                    deleting,
+                    allowConflict,
+                    validationBlock,
+                    outStatus);
+        } catch (CouchbaseLiteException e) {
+            Log.e(TAG, "%d", e.getCBLStatus());
+        }
+
+        if(putRev!=null)
+            Log.v(TAG, "--> created %s", putRev);
+
+        return putRev;
     }
 
     /**
@@ -1879,9 +1960,11 @@ public final class Database implements StoreDelegate {
      * status: (CBLStatus*)outStatus
      * NOTE: Called only from internal and Unit Tests
      */
+    /*
     protected String winningRevIDOfDoc(long docNumericId, AtomicBoolean outIsDeleted, AtomicBoolean outIsConflict) throws CouchbaseLiteException {
-        return store == null ? null : store.winningRevIDOfDoc(docNumericId, outIsDeleted, outIsConflict);
+        return store.winningRevIDOfDocNumericID(docNumericId, outIsDeleted, outIsConflict);
     }
+    */
 
     // Database+Attachments
 
@@ -1981,7 +2064,7 @@ public final class Database implements StoreDelegate {
                     if (doc != null) {
                         doc.revisionAdded(change, true);
                     }
-                    if (change.getSourceUrl() != null) {
+                    if (change.getSource() != null) {
                         isExternal = true;
                     }
                 }

@@ -340,7 +340,7 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
         List<DocumentChange> changes = event.getChanges();
         for (DocumentChange change : changes) {
             // Skip revisions that originally came from the database I'm syncing to:
-            URL source = change.getSourceUrl();
+            URL source = change.getSource();
             if (source != null && source.equals(remote)) {
                 return;
             }

@@ -32,7 +32,6 @@ import com.couchbase.lite.storage.Cursor;
 import com.couchbase.lite.storage.SQLException;
 import com.couchbase.lite.storage.SQLiteStorageEngine;
 import com.couchbase.lite.storage.SQLiteStorageEngineFactory;
-import com.couchbase.lite.support.Base64;
 import com.couchbase.lite.support.RevisionUtils;
 import com.couchbase.lite.util.Log;
 import com.couchbase.lite.util.SQLiteUtils;
@@ -40,7 +39,6 @@ import com.couchbase.lite.util.TextUtils;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -95,21 +93,16 @@ public class SQLiteStore implements Store {
             "        lastsequence INTEGER DEFAULT 0," +
             "        total_docs INTEGER DEFAULT -1); " +
             "    CREATE INDEX views_by_name ON views(name); " +
-            // attachments - todo: remove
-            "    CREATE TABLE attachments ( " +
-            "        sequence INTEGER NOT NULL REFERENCES revs(sequence) ON DELETE CASCADE, " +
-            "        filename TEXT NOT NULL, " +
-            "        key BLOB NOT NULL, " +
-            "        type TEXT, " +
-            "        length INTEGER NOT NULL, " +
-            "        revpos INTEGER DEFAULT 0); " +
-            "    CREATE INDEX attachments_by_sequence on attachments(sequence, filename); " +
             // info
             "    CREATE TABLE info (" +
             "        key TEXT PRIMARY KEY," +
             "        value TEXT);" +
             // version
-            "    PRAGMA user_version = 3"; // at the end, update user_version
+            "    PRAGMA user_version = 17"; // at the end, update user_version
+    //OPT: Would be nice to use partial indexes but that requires SQLite 3.8 and makes the
+    // db file only readable by SQLite 3.8+, i.e. the file would not be portable to iOS 8
+    // which only has SQLite 3.7 :(
+    // On the revs_parent index we could add "WHERE parent not null".
 
     // transactionLevel is per thread
     static class TransactionLevel extends ThreadLocal<Integer> {
@@ -190,40 +183,24 @@ public class SQLiteStore implements Store {
         }
 
         try {
-            if (dbVersion < 1) {
+            if (dbVersion < 17) {
                 // First-time initialization:
                 // (Note: Declaring revs.sequence as AUTOINCREMENT means the values will always be
                 // monotonically increasing, never reused. See <http://www.sqlite.org/autoinc.html>)
+
+                if (!isNew) {
+                    Log.w(TAG, "CBLDatabase: Database version (%d) is older than I know how to work with",
+                            dbVersion);
+                    storageEngine.close();
+                    return false;
+                }
+
                 if (!initialize(SCHEMA)) {
                     return false;
                 }
-                dbVersion = 3;
+                dbVersion = 17;
             }
 
-            if (dbVersion < 5) {
-                // Version 5: added encoding for attachments
-                String upgradeSql = "ALTER TABLE attachments ADD COLUMN encoding INTEGER DEFAULT 0; " +
-                        "ALTER TABLE attachments ADD COLUMN encoded_length INTEGER; " +
-                        "PRAGMA user_version = 5";
-                if (!initialize(upgradeSql)) {
-                    return false;
-                }
-                dbVersion = 5;
-            }
-
-            if (dbVersion < 16) {
-                // Version 16: Fix the very suboptimal index revs_cur_deleted.
-                // The new revs_current is an optimal index for finding the winning revision of a doc.
-                String upgradeSql = "DROP INDEX IF EXISTS revs_current; " +
-                        "DROP INDEX IF EXISTS revs_cur_deleted; " +
-                        "CREATE INDEX revs_current ON revs(doc_id, current desc, deleted, revid desc);" +
-                        "PRAGMA user_version = 16";
-
-                if (!initialize(upgradeSql)) {
-                    return false;
-                }
-                dbVersion = 16;
-            }
 
             if (dbVersion < 21) {
                 // Version 18:
@@ -233,6 +210,14 @@ public class SQLiteStore implements Store {
                     return false;
                 }
                 dbVersion = 21;
+            }
+
+            if (dbVersion < 101) {
+                String upgradeSql = "PRAGMA user_version = 101";
+                if (!initialize(upgradeSql)) {
+                    return false;
+                }
+                dbVersion = 101;
             }
 
             if (isNew) {
@@ -439,6 +424,12 @@ public class SQLiteStore implements Store {
     @Override
     public RevisionInternal getDocument(String docID, String revID,
                                         EnumSet<Database.TDContentOptions> contentOptions) {
+
+        long docNumericID = getDocNumericID(docID);
+        if (docNumericID < 0) {
+            return null;
+        }
+
         RevisionInternal result = null;
         String sql;
 
@@ -450,14 +441,15 @@ public class SQLiteStore implements Store {
                 cols += ", json";
             }
             if (revID != null) {
-                sql = "SELECT " + cols + " FROM revs, docs WHERE docs.docid=? AND revs.doc_id=docs.doc_id AND revid=? LIMIT 1";
+                sql = "SELECT " + cols + " FROM revs WHERE revs.doc_id=? AND revid=? AND json notnull LIMIT 1";
                 //TODO: mismatch w iOS: {sql = "SELECT " + cols + " FROM revs WHERE revs.doc_id=? AND revid=? AND json notnull LIMIT 1";}
-                String[] args = {docID, revID};
+                String[] args = {Long.toString(docNumericID), revID};
                 cursor = storageEngine.rawQuery(sql, args);
             } else {
-                sql = "SELECT " + cols + " FROM revs, docs WHERE docs.docid=? AND revs.doc_id=docs.doc_id and current=1 and deleted=0 ORDER BY revid DESC LIMIT 1";
+                sql = "SELECT " + cols + " FROM revs WHERE revs.doc_id=? and current=1 and deleted=0 ORDER BY revid DESC LIMIT 1";
+                //sql = "SELECT " + cols + " FROM revs WHERE revs.doc_id=? and current=1 ORDER BY revid DESC LIMIT 1";
                 //TODO: mismatch w iOS: {sql = "SELECT " + cols + " FROM revs WHERE revs.doc_id=? and current=1 and deleted=0 ORDER BY revid DESC LIMIT 1";}
-                String[] args = {docID};
+                String[] args = {Long.toString(docNumericID)};
                 cursor = storageEngine.rawQuery(sql, args);
             }
 
@@ -987,7 +979,7 @@ public class SQLiteStore implements Store {
                             if (docNumericID > 0) {
                                 boolean deleted;
                                 AtomicBoolean outIsDeleted = new AtomicBoolean(false);
-                                String revID = winningRevIDOfDoc(docNumericID, outIsDeleted, null);
+                                String revID = winningRevIDOfDocNumericID(docNumericID, outIsDeleted, null);
                                 if (revID != null) {
                                     value.put("rev", revID);
                                     value.put("deleted", true);
@@ -1088,155 +1080,154 @@ public class SQLiteStore implements Store {
     ///////////////////////////////////////////////////////////////////////////
 
     /**
-     * Stores a new (or initial) revision of a document.
-     * <p/>
-     * This is what's invoked by a PUT or POST. As with those, the previous revision ID must be supplied when necessary and the call will fail if it doesn't match.
+     * Creates a new revision of a document.
+     * On success, before returning the new CBL_Revision, the implementation will also call the
+     * delegate's -databaseStorageChanged: method to give it more details about the change.
      *
-     * @param oldRev        The revision to add. If the docID is null, a new UUID will be assigned. Its revID must be null. It must have a JSON body.
-     * @param prevRevId     The ID of the revision to replace (same as the "?rev=" parameter to a PUT), or null if this is a new document.
-     * @param allowConflict If false, an error status 409 will be returned if the insertion would create a conflict, i.e. if the previous revision already has a child.
-     * @param resultStatus  On return, an HTTP status code indicating success or failure.
-     * @return A new RevisionInternal with the docID, revID and sequence filled in (but no body).
-     * <p/>
-     * NOTE: Called by Internal and Unit Tests
+     * @param docID           The document ID, or nil if an ID should be generated at random.
+     * @param prevRevID       The parent revision ID, or nil if creating a new document.
+     * @param properties      The new revision's properties. (Metadata other than "_attachments" ignored.)
+     * @param deleting        YES if this revision is a deletion.
+     * @param allowConflict   YES if this operation is allowed to create a conflict; otherwise a 409,
+     *                        status will be returned if the parent revision is not a leaf.
+     * @param validationBlock If non-nil, this block will be called before the revision is added.
+     *                        It's given the parent revision, with its properties if available, and can reject
+     *                        the operation by returning an error status.
+     * @param outStatus       On return a status will be stored here. Note that on success, the
+     *                        status should be 201 for a created revision but 200 for a deletion.
+     * @return The new revision, with its revID and sequence filled in, or nil on error.
      */
     @Override
     @InterfaceAudience.Private
-    public RevisionInternal putRevision(RevisionInternal oldRev, String prevRevId, boolean allowConflict, Status resultStatus)
+    public RevisionInternal add(
+            String docID,
+            String prevRevID,
+            Map<String, Object> properties,
+            boolean deleting,
+            boolean allowConflict,
+            StorageValidation validationBlock,
+            Status outStatus)
             throws CouchbaseLiteException {
-        // prevRevId is the rev ID being replaced, or nil if an insert
-        String docId = oldRev.getDocId();
-        boolean deleted = oldRev.isDeleted();
-        if ((oldRev == null) || ((prevRevId != null) && (docId == null)) || (deleted && (docId == null))
-                || ((docId != null) && !Document.isValidDocumentId(docId))) {
-            throw new CouchbaseLiteException(Status.BAD_REQUEST);
+
+        byte[] json;
+        if (properties != null && properties.size() > 0) {
+            json = RevisionUtils.asCanonicalJSON(properties);
+            if (json == null)
+                throw new CouchbaseLiteException(Status.BAD_JSON);
+        }
+        else{
+            json = "{}".getBytes();
         }
 
-        beginTransaction();
-        Cursor cursor = null;
-        boolean inConflict = false;
-        RevisionInternal winningRev = null;
         RevisionInternal newRev = null;
+        String winningRevID = null;
+        boolean inConflict = false;
 
-        //// PART I: In which are performed lookups and validations prior to the insert...
-
-        long docNumericID = (docId != null) ? getDocNumericID(docId) : 0;
-        long parentSequence = 0;
-        AtomicBoolean oldWinnerWasDeletion = new AtomicBoolean(false);
-        AtomicBoolean wasConflicted = new AtomicBoolean(false);
-        String oldWinningRevID = null;
-
+        beginTransaction();
+        // try - finally for beginTransaction() and endTransaction()
         try {
-            if (docNumericID > 0) {
-                try {
-                    oldWinningRevID = winningRevIDOfDoc(docNumericID, oldWinnerWasDeletion, wasConflicted);
+            //// PART I: In which are performed lookups and validations prior to the insert...
 
-                } catch (Exception e) {
-                    e.printStackTrace();
+            // Get the doc's numeric ID (doc_id) and its current winning revision:
+            AtomicBoolean isNewDoc = new AtomicBoolean(prevRevID == null);
+            long docNumericID = -1;
+            if (docID != null) {
+                docNumericID = createOrGetDocNumericID(docID, isNewDoc);
+                if (docNumericID <= 0) {
+                    // TODO: error
                 }
+            } else {
+                docNumericID = 0;
+                isNewDoc.set(true);
             }
 
-            if (prevRevId != null) {
+            AtomicBoolean oldWinnerWasDeletion = new AtomicBoolean(false);
+            AtomicBoolean wasConflicted = new AtomicBoolean(false);
+            String oldWinningRevID = null;
+            if (!isNewDoc.get()) {
+                // Look up which rev is the winner, before this insertion
+                //OPT: This rev ID could be cached in the 'docs' row
+                oldWinningRevID = winningRevIDOfDocNumericID(docNumericID, oldWinnerWasDeletion, wasConflicted);
+            }
+
+            long parentSequence = 0;
+            if (prevRevID != null) {
                 // Replacing: make sure given prevRevID is current & find its sequence number:
-                if (docNumericID <= 0) {
-                    String msg = String.format("No existing revision found with doc id: %s", docId);
-                    throw new CouchbaseLiteException(msg, Status.NOT_FOUND);
-                }
+                if (isNewDoc.get())
+                    throw new CouchbaseLiteException(Status.NOT_FOUND);
 
-                parentSequence = getSequenceOfDocument(docNumericID, prevRevId, !allowConflict);
-
+                parentSequence = getSequenceOfDocument(docNumericID, prevRevID, !allowConflict);
                 if (parentSequence == 0) {
                     // Not found: either a 404 or a 409, depending on whether there is any current revision
-                    if (!allowConflict && existsDocumentWithIDAndRev(docId, null)) {
-                        String msg = String.format("Conflicts not allowed and there is already an existing doc with id: %s", docId);
-                        throw new CouchbaseLiteException(msg, Status.CONFLICT);
-                    } else {
-                        String msg = String.format("No existing revision found with doc id: %s", docId);
-                        throw new CouchbaseLiteException(msg, Status.NOT_FOUND);
-                    }
-                }
-
-                if (delegate.getValidations() != null && delegate.getValidations().size() > 0) {
-                    // Fetch the previous revision and validate the new one against it:
-                    RevisionInternal fakeNewRev = oldRev.copyWithDocID(oldRev.getDocId(), null);
-                    RevisionInternal prevRev = new RevisionInternal(docId, prevRevId, false);
-                    delegate.validateRevision(fakeNewRev, prevRev, prevRevId);
-                }
-
-            } else {
-                // Inserting first revision.
-                if (deleted && (docId != null)) {
-                    // Didn't specify a revision to delete: 404 or a 409, depending
-                    if (existsDocumentWithIDAndRev(docId, null)) {
+                    if (!allowConflict && existsDocument(docID, null)) {
                         throw new CouchbaseLiteException(Status.CONFLICT);
                     } else {
                         throw new CouchbaseLiteException(Status.NOT_FOUND);
                     }
                 }
+            } else {
+                // Inserting first revision.
+                if (deleting && docID != null) {
+                    // Didn't specify a revision to delete: 404 or a 409, depending
+                    if (existsDocument(docID, null))
+                        throw new CouchbaseLiteException(Status.CONFLICT);
+                    else
+                        throw new CouchbaseLiteException(Status.NOT_FOUND);
+                }
 
-                // Validate:
-                delegate.validateRevision(oldRev, null, null);
-
-                if (docId != null) {
+                if (docID != null) {
                     // Inserting first revision, with docID given (PUT):
-                    if (docNumericID <= 0) {
-                        // Doc doesn't exist at all; create it:
-                        docNumericID = insertDocumentID(docId);
-                        if (docNumericID <= 0) {
-                            return null;
-                        }
-                    } else {
-
-                        // Doc ID exists; check whether current winning revision is deleted:
-                        if (oldWinnerWasDeletion.get() == true) {
-                            prevRevId = oldWinningRevID;
-                            parentSequence = getSequenceOfDocument(docNumericID, prevRevId, false);
-
-                        } else if (oldWinningRevID != null) {
-                            String msg = "The current winning revision is not deleted, so this is a conflict";
-                            throw new CouchbaseLiteException(msg, Status.CONFLICT);
-                        }
+                    // Doc ID exists; check whether current winning revision is deleted:
+                    if (oldWinnerWasDeletion.get() == true) {
+                        prevRevID = oldWinningRevID;
+                        parentSequence = getSequenceOfDocument(docNumericID, prevRevID, false);
+                    } else if (oldWinningRevID != null) {
+                        // The current winning revision is not deleted, so this is a conflict
+                        throw new CouchbaseLiteException(Status.CONFLICT);
                     }
                 } else {
                     // Inserting first revision, with no docID given (POST): generate a unique docID:
-                    docId = Database.generateDocumentId();
-                    docNumericID = insertDocumentID(docId);
-                    if (docNumericID <= 0) {
+                    docID = Misc.CreateUUID();
+                    docNumericID = createOrGetDocNumericID(docID, isNewDoc);
+                    if (docNumericID <= 0)
                         return null;
-                    }
                 }
             }
 
             // There may be a conflict if (a) the document was already in conflict, or
             // (b) a conflict is created by adding a non-deletion child of a non-winning rev.
             inConflict = wasConflicted.get() ||
-                    (!deleted &&
-                            prevRevId != null &&
+                    (!deleting &&
+                            prevRevID != null &&
                             oldWinningRevID != null &&
-                            !prevRevId.equals(oldWinningRevID));
+                            !prevRevID.equals(oldWinningRevID));
 
             //// PART II: In which we prepare for insertion...
 
-            // Get the attachments:
-            Map<String, AttachmentInternal> attachments = delegate.getAttachmentsFromRevision(oldRev, prevRevId);
-
             // Bump the revID and update the JSON:
-            byte[] json = null;
-            if (oldRev.getProperties() != null && oldRev.getProperties().size() > 0) {
-                json = RevisionUtils.encodeDocumentJSON(oldRev);
-                if (json == null) {
-                    String msg = "Bad or missing JSON";
-                    throw new CouchbaseLiteException(msg, Status.BAD_REQUEST);
-                }
-
-                if (json.length == 2 && json[0] == '{' && json[1] == '}') {
-                    json = null;
-                }
+            String newRevId = delegate.generateRevID(json, deleting, prevRevID);
+            if(newRevId == null)
+                throw new CouchbaseLiteException(Status.BAD_ID); // invalid previous revID (no numeric prefix)
+            assert (docID != null);
+            newRev = new RevisionInternal(docID, newRevId, deleting);
+            if (properties != null) {
+                properties.put("_id", docID);
+                properties.put("_rev", newRevId);
+                newRev.setProperties(properties);
             }
 
-            String newRevId = RevisionUtils.generateIDForRevision(oldRev, json, attachments, prevRevId);
-            newRev = oldRev.copyWithDocID(docId, newRevId);
-            delegate.stubOutAttachmentsInRevision(attachments, newRev);
+            // Validate:
+            if (validationBlock != null) {
+                // Fetch the previous revision and validate the new one against it:
+                RevisionInternal prevRev = null;
+                if(prevRevID!=null)
+                    prevRev = new RevisionInternal(docID, prevRevID, false);
+                Status status = validationBlock.validate(newRev, prevRev, prevRevID);
+                if(status.isError()) {
+                    outStatus.setCode(status.getCode());
+                    return null;
+                }
+            }
 
             // Don't store a SQL null in the 'json' column -- I reserve it to mean that the revision data
             // is missing due to compaction or replication.
@@ -1245,9 +1236,16 @@ public class SQLiteStore implements Store {
                 json = new byte[0];
 
             //// PART III: In which the actual insertion finally takes place:
-            // Now insert the rev itself:
-            long newSequence = insertRevision(newRev, docNumericID, parentSequence, true, (attachments != null), json, null);
-            if (newSequence <= 0) {
+            boolean hasAttachments = properties == null ? false : properties.get("_attachments") != null;
+            String docType = properties == null ? null : (String) properties.get("type");
+            long sequence = insertRevision(newRev,
+                    docNumericID,
+                    parentSequence,
+                    true,
+                    hasAttachments,
+                    json,
+                    docType);
+            if (sequence <= 0) {
                 // The insert failed. If it was due to a constraint violation, that means a revision
                 // already exists with identical contents and the same parent rev. We can ignore this
                 // insert call, then.
@@ -1258,7 +1256,7 @@ public class SQLiteStore implements Store {
                 //        However, returning after updating parentSequence might not cause any problem.
                 //if (_fmdb.lastErrorCode != SQLITE_CONSTRAINT)
                 //    return null;
-                Log.w(TAG, "Duplicate rev insertion: " + docId + " / " + newRevId);
+                Log.w(TAG, "Duplicate rev insertion: " + docID + " / " + newRevId);
                 newRev.setBody(null);
                 // don't return yet; update the parent's current just to be sure (see #316 (iOS #509))
             }
@@ -1272,45 +1270,37 @@ public class SQLiteStore implements Store {
                     storageEngine.update("revs", args, "sequence=?", new String[]{String.valueOf(parentSequence)});
                 } catch (SQLException e) {
                     Log.e(TAG, "Error setting parent rev non-current", e);
+                    storageEngine.delete("revs", "sequence=?", new String[]{String.valueOf(sequence)});
                     throw new CouchbaseLiteException(e, Status.INTERNAL_SERVER_ERROR);
                 }
             }
 
-            if (newSequence <= 0) {
+            if (sequence <= 0) {
                 // duplicate rev; see above
-                resultStatus.setCode(Status.OK);
-                delegate.databaseStorageChanged(new DocumentChange(newRev, winningRev, inConflict, null));
+                outStatus.setCode(Status.OK);
+                if (newRev.getSequence() != 0)
+                    delegate.databaseStorageChanged(new DocumentChange(newRev, winningRevID, inConflict, null));
                 return newRev;
             }
 
-            // Store any attachments:
-            if (attachments != null) {
-                delegate.processAttachmentsForRevision(attachments, newRev, parentSequence);
-            }
-
-
             // Figure out what the new winning rev ID is:
-            winningRev = delegate.winner(docNumericID, oldWinningRevID, oldWinnerWasDeletion.get(), newRev);
+            winningRevID = winner(docNumericID, oldWinningRevID, oldWinnerWasDeletion.get(), newRev);
 
             // Success!
-            if (deleted) {
-                resultStatus.setCode(Status.OK);
+            if (deleting) {
+                outStatus.setCode(Status.OK);
             } else {
-                resultStatus.setCode(Status.CREATED);
+                outStatus.setCode(Status.CREATED);
             }
 
-        } catch (SQLException e1) {
-            Log.e(TAG, "Error putting revision", e1);
-            return null;
         } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-            endTransaction(resultStatus.isSuccessful());
+            endTransaction(outStatus.isSuccessful());
         }
 
         //// EPILOGUE: A change notification is sent...
-        delegate.databaseStorageChanged(new DocumentChange(newRev, winningRev, inConflict, null));
+        if (newRev.getSequence() != 0)
+            delegate.databaseStorageChanged(new DocumentChange(newRev, winningRevID, inConflict, null));
+
         return newRev;
     }
 
@@ -1332,7 +1322,7 @@ public class SQLiteStore implements Store {
         // TODO: creates a mutable copy.  We should do the same here.
         // TODO: see github.com/couchbase/couchbase-lite-java-core/issues/206#issuecomment-44364624
 
-        RevisionInternal winningRev = null;
+        String winningRevID = null;
         boolean inConflict = false;
 
         String docId = inRev.getDocId();
@@ -1359,7 +1349,8 @@ public class SQLiteStore implements Store {
             // First look up the document's row-id and all locally-known revisions of it:
             Map<String, RevisionInternal> localRevs = null;
             boolean isNewDoc = (historyCount == 1);
-            long docNumericID = getOrInsertDocNumericID(docId);
+            AtomicBoolean tmp = new AtomicBoolean(isNewDoc);
+            long docNumericID = createDocNumericID(docId, tmp);
 
             if (!isNewDoc) {
                 RevisionList localRevsList = getAllRevisions(docId, docNumericID, false);
@@ -1388,7 +1379,7 @@ public class SQLiteStore implements Store {
             AtomicBoolean outIsDeleted = new AtomicBoolean(false);
             AtomicBoolean outIsConflict = new AtomicBoolean(false);
             boolean oldWinnerWasDeletion = false;
-            String oldWinningRevID = winningRevIDOfDoc(docNumericID, outIsDeleted, outIsConflict);
+            String oldWinningRevID = winningRevIDOfDocNumericID(docNumericID, outIsDeleted, outIsConflict);
             if (outIsDeleted.get()) {
                 oldWinnerWasDeletion = true;
             }
@@ -1419,7 +1410,7 @@ public class SQLiteStore implements Store {
                         // Hey, this is the leaf revision we're inserting:
                         newRev = inRev;
                         if (!inRev.isDeleted()) {
-                            data = RevisionUtils.encodeDocumentJSON(inRev);
+                            data = RevisionUtils.asCanonicalJSON(inRev);
                             if (data == null) {
                                 throw new CouchbaseLiteException(Status.BAD_REQUEST);
                             }
@@ -1467,13 +1458,13 @@ public class SQLiteStore implements Store {
                 }
             }
 
-            winningRev = delegate.winner(docNumericID, oldWinningRevID, oldWinnerWasDeletion, inRev);
+            winningRevID = winner(docNumericID, oldWinningRevID, oldWinnerWasDeletion, inRev);
 
             success = true;
 
             // Notify and return:
             if (delegate != null)
-                delegate.databaseStorageChanged(new DocumentChange(inRev, winningRev, inConflict, source));
+                delegate.databaseStorageChanged(new DocumentChange(inRev, winningRevID, inConflict, source));
 
         } catch (SQLException e) {
             throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
@@ -1683,7 +1674,7 @@ public class SQLiteStore implements Store {
 
         if (!revision.isDeleted()) {
             // PUT:
-            byte[] json = RevisionUtils.encodeDocumentJSON(revision);
+            byte[] json = RevisionUtils.asCanonicalJSON(revision);
             String newRevID;
             if (prevRevID != null) {
                 int generation = RevisionInternal.generationFromRevID(prevRevID);
@@ -1898,6 +1889,8 @@ public class SQLiteStore implements Store {
     @Override
     public Map<String, Object> getAttachmentsDictForSequenceWithContent(long sequence,
                                                                         EnumSet<Database.TDContentOptions> contentOptions) {
+        return null;
+        /*
         assert (sequence > 0);
 
         Cursor cursor = null;
@@ -1984,6 +1977,7 @@ public class SQLiteStore implements Store {
                 cursor.close();
             }
         }
+        */
     }
 
     @Override
@@ -1998,31 +1992,6 @@ public class SQLiteStore implements Store {
         }
     }
 
-    @Override
-    public long getDocNumericID(String docId) {
-        Cursor cursor = null;
-        String[] args = {docId};
-
-        long result = -1;
-        try {
-            cursor = storageEngine.rawQuery("SELECT doc_id FROM docs WHERE docid=?", args);
-
-            if (cursor.moveToNext()) {
-                result = cursor.getLong(0);
-            } else {
-                result = 0;
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting doc numeric id", e);
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-
-        return result;
-    }
-
     /**
      * Deletes obsolete attachments from the sqliteDb and blob store.
      */
@@ -2031,6 +2000,8 @@ public class SQLiteStore implements Store {
         // First delete attachment rows for already-cleared revisions:
         // OPT: Could start after last sequence# we GC'd up to
 
+        return new Status(Status.OK);
+        /*
         try {
             storageEngine.execSQL("DELETE FROM attachments WHERE sequence IN " +
                     "(SELECT sequence from revs WHERE json IS null)");
@@ -2067,6 +2038,7 @@ public class SQLiteStore implements Store {
                 cursor.close();
             }
         }
+        */
     }
 
     /**
@@ -2078,24 +2050,23 @@ public class SQLiteStore implements Store {
      * isConflict: (BOOL*)outIsConflict // optional
      * status: (CBLStatus*)outStatus
      */
-    @Override
-    public String winningRevIDOfDoc(long docNumericId, AtomicBoolean outIsDeleted,
-                                    AtomicBoolean outIsConflict)
+    private String winningRevIDOfDocNumericID(long docNumericId,
+                                             AtomicBoolean outIsDeleted,
+                                             AtomicBoolean outIsConflict) // optional
             throws CouchbaseLiteException {
-
+        assert (docNumericId > 0);
         Cursor cursor = null;
         String sql = "SELECT revid, deleted FROM revs" +
                 " WHERE doc_id=? and current=1" +
-                " ORDER BY deleted asc, revid desc LIMIT 2";
+                " ORDER BY deleted asc, revid desc LIMIT ?";
 
-        String[] args = {Long.toString(docNumericId)};
-        String revId = null;
-
+        long limit = (outIsConflict == null || !outIsConflict.get()) ? 1 : 2;
+        String[] args = {Long.toString(docNumericId), Long.toString(limit)};
+        String revID = null;
         try {
             cursor = storageEngine.rawQuery(sql, args);
-
             if (cursor.moveToNext()) {
-                revId = cursor.getString(0);
+                revID = cursor.getString(0);
                 outIsDeleted.set(cursor.getInt(1) > 0);
                 // The document is in conflict if there are two+ result rows that are not deletions.
                 if (outIsConflict != null) {
@@ -2107,7 +2078,6 @@ public class SQLiteStore implements Store {
                     outIsConflict.set(false);
                 }
             }
-
         } catch (SQLException e) {
             Log.e(TAG, "Error", e);
             throw new CouchbaseLiteException("Error", e, new Status(Status.INTERNAL_SERVER_ERROR));
@@ -2116,19 +2086,19 @@ public class SQLiteStore implements Store {
                 cursor.close();
             }
         }
-
-        return revId;
+        return revID;
     }
 
     @Override
-    public boolean existsDocumentWithIDAndRev(String docId, String revId) {
-        return getDocument(docId, revId, EnumSet.of(Database.TDContentOptions.TDNoBody)) != null;
+    public boolean existsDocument(String docID, String revID) {
+        return getDocument(docID, revID, EnumSet.of(Database.TDContentOptions.TDNoBody)) != null;
     }
 
 
     @Override
     public void copyAttachmentNamedFromSequenceToSequence(String name, long fromSeq, long toSeq)
             throws CouchbaseLiteException {
+        /*
         assert (name != null);
         assert (toSeq > 0);
         if (fromSeq < 0) {
@@ -2161,6 +2131,8 @@ public class SQLiteStore implements Store {
                 cursor.close();
             }
         }
+        */
+
     }
 
     @Override
@@ -2209,30 +2181,6 @@ public class SQLiteStore implements Store {
         }
         return true;
     }
-
-    /*
-    @Override
-    public Status deleteViewNamed(String name) {
-        Status result = new Status(Status.INTERNAL_SERVER_ERROR);
-        try {
-            if (delegate.getViews() != null) {
-                if (name != null) {
-                    delegate.getViews().remove(name);
-                }
-            }
-            String[] whereArgs = {name};
-            int rowsAffected = storageEngine.delete("views", "name=?", whereArgs);
-            if (rowsAffected > 0) {
-                result.setCode(Status.OK);
-            } else {
-                result.setCode(Status.NOT_FOUND);
-            }
-        } catch (SQLException e) {
-            Log.e(TAG, "Error deleting view", e);
-        }
-        return result;
-    }
-    */
 
     @Override
     public Map<String, Object> documentPropertiesFromJSON(byte[] json, String docID,
@@ -2290,6 +2238,8 @@ public class SQLiteStore implements Store {
      */
     @Override
     public Attachment getAttachmentForSequence(long sequence, String filename) throws CouchbaseLiteException {
+        return null;
+        /*
         assert (sequence > 0);
         assert (filename != null);
 
@@ -2323,6 +2273,7 @@ public class SQLiteStore implements Store {
                 cursor.close();
             }
         }
+        */
     }
 
     /**
@@ -2330,6 +2281,8 @@ public class SQLiteStore implements Store {
      */
     @Override
     public String getAttachmentPathForSequence(long sequence, String filename) throws CouchbaseLiteException {
+        return null;
+        /*
         assert (sequence > 0);
         assert (filename != null);
         Cursor cursor = null;
@@ -2356,6 +2309,7 @@ public class SQLiteStore implements Store {
                 cursor.close();
             }
         }
+        */
     }
 
     @Override
@@ -2365,6 +2319,7 @@ public class SQLiteStore implements Store {
                                                            AttachmentInternal.AttachmentEncoding encoding,
                                                            long encodedLength)
             throws CouchbaseLiteException {
+        /*
         try {
             ContentValues args = new ContentValues();
             args.put("sequence", sequence);
@@ -2393,6 +2348,7 @@ public class SQLiteStore implements Store {
             Log.e(TAG, "Error inserting attachment", e);
             throw new CouchbaseLiteException(e, Status.INTERNAL_SERVER_ERROR);
         }
+        */
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -2638,19 +2594,50 @@ public class SQLiteStore implements Store {
         return SQLiteUtils.booleanForQuery(storageEngine, "SELECT no_attachments=0 FROM revs WHERE sequence=?", args);
     }
 
-    private long getOrInsertDocNumericID(String docId) {
-        long docNumericId = getDocNumericID(docId);
-        if (docNumericId == 0) {
-            docNumericId = insertDocumentID(docId);
+    private long getDocNumericID(String docID) {
+        return SQLiteUtils.longForQuery(storageEngine,
+                "SELECT doc_id FROM docs WHERE docid=?",
+                new String[]{docID});
+    }
+
+    // Registers a docID and returns its numeric row ID in the 'docs' table.
+    // On input, *ioIsNew should be YES if the docID is probably not known, NO if it's probably known.
+    // On return, *ioIsNew will be YES iff the docID is newly-created (was not known before.)
+    // Return value is the positive row ID of this doc, or <= 0 on error.
+    private long createOrGetDocNumericID(String docID, AtomicBoolean isNew) {
+        // TODO: cache
+
+        long row = isNew.get() ? createDocNumericID(docID, isNew) : getDocNumericID(docID);
+        if (row < 0)
+            return row;
+        if (row == 0) {
+            isNew.set(!isNew.get());
+            row = isNew.get() ? createDocNumericID(docID, isNew) : getDocNumericID(docID);
+        }
+
+        // TODO: cache
+
+        return row;
+    }
+
+    //private long getOrInsertDocNumericID(String docID) {
+    private long createDocNumericID(String docID, AtomicBoolean isNew) {
+        long docNumericId = getDocNumericID(docID);
+        if (docNumericId == -1) {
+            docNumericId = insertDocumentID(docID);
+            isNew.set(true);
+        }
+        else{
+            isNew.set(false);
         }
         return docNumericId;
     }
 
-    private long insertDocumentID(String docId) {
+    private long insertDocumentID(String docID) {
         long rowId = -1;
         try {
             ContentValues args = new ContentValues();
-            args.put("docid", docId);
+            args.put("docid", docID);
             rowId = storageEngine.insert("docs", null, args);
         } catch (Exception e) {
             Log.e(TAG, "Error inserting document id", e);
@@ -2686,29 +2673,12 @@ public class SQLiteStore implements Store {
         return rowId;
     }
 
-    private long getSequenceOfDocument(long docNumericId, String revId, boolean onlyCurrent) {
-        long result = -1;
-        Cursor cursor = null;
-        try {
-            String extraSql = (onlyCurrent ? "AND current=1" : "");
-            String sql = String.format(
-                    "SELECT sequence FROM revs WHERE doc_id=? AND revid=? %s LIMIT 1", extraSql);
-            String[] args = {"" + docNumericId, revId};
-            cursor = storageEngine.rawQuery(sql, args);
-
-            if (cursor.moveToNext()) {
-                result = cursor.getLong(0);
-            } else {
-                result = 0;
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting getSequenceOfDocument", e);
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-        return result;
+    private long getSequenceOfDocument(long docNumericID, String revID, boolean onlyCurrent) {
+        String sql = String.format(
+                "SELECT sequence FROM revs WHERE doc_id=? AND revid=? %s LIMIT 1",
+                (onlyCurrent ? "AND current=1" : ""));
+        String[] args = {Long.toString(docNumericID), revID};
+        return SQLiteUtils.longForQuery(storageEngine, sql, args);
     }
 
     /**
@@ -2765,5 +2735,32 @@ public class SQLiteStore implements Store {
         if (properties != null)
             rev.setProperties(properties);
         return rev;
+    }
+
+
+    private String winner(long docNumericID,
+                          String oldWinningRevID,
+                          boolean oldWinnerWasDeletion,
+                          RevisionInternal newRev)
+            throws CouchbaseLiteException {
+
+        String newRevID = newRev.getRevId();
+        if (oldWinningRevID == null) {
+            return newRevID;
+        }
+        if (!newRev.isDeleted()) {
+            if (oldWinnerWasDeletion || RevisionInternal.CBLCompareRevIDs(newRevID, oldWinningRevID) > 0)
+                return newRevID; // this is now the winning live revision
+        } else if (oldWinnerWasDeletion) {
+            if (RevisionInternal.CBLCompareRevIDs(newRevID, oldWinningRevID) > 0)
+                return newRevID; // doc still deleted, but this beats previous deletion rev
+        } else {
+            // Doc was alive. How does this deletion affect the winning rev ID?
+            AtomicBoolean outIsDeleted = new AtomicBoolean(false);
+            String winningRevID = winningRevIDOfDocNumericID(docNumericID, outIsDeleted, null);
+            if (!winningRevID.equals(oldWinningRevID))
+                return winningRevID;
+        }
+        return null; // no change
     }
 }

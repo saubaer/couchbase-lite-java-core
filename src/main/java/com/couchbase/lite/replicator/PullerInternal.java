@@ -811,7 +811,7 @@ public class PullerInternal extends ReplicationInternal implements ChangeTracker
                 }
                 break;
             default:
-                Log.e(Log.TAG_SYNC, String.format("Unknown lifecycle: %s", lifecycle));
+                Log.e(Log.TAG_SYNC, "Unknown lifecycle: %s", lifecycle);
         }
     }
 

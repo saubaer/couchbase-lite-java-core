@@ -38,27 +38,27 @@ public final class Attachment {
     /**
      * The owning document revision.
      */
-    private Revision revision;
+    private Revision revision = null;
 
     /**
      * Whether or not this attachment is gzipped
      */
-    private boolean gzipped;
+    private boolean gzipped = false;
 
     /**
      * The filename.
      */
-    private String name;
+    private String name = null;
 
     /**
      * The CouchbaseLite metadata about the attachment, that lives in the document.
      */
-    private Map<String, Object> metadata;
+    private Map<String, Object> metadata = null;
 
     /**
      * The body data.
      */
-    private InputStream body;
+    private InputStream body = null;
 
     /**
      * Constructor
@@ -69,7 +69,6 @@ public final class Attachment {
         metadata = new HashMap<String, Object>();
         metadata.put("content_type", contentType);
         metadata.put("follows", true);
-        this.gzipped = false;
     }
 
     /**
@@ -80,7 +79,6 @@ public final class Attachment {
         this.revision = revision;
         this.name = name;
         this.metadata = metadata;
-        this.gzipped = false;
     }
 
     /**

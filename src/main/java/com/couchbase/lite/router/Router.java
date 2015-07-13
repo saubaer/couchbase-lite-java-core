@@ -745,7 +745,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         int count = Math.min(1000, getIntQuery("count", 1));
         List<String> uuids = new ArrayList<String>(count);
         for (int i = 0; i < count; i++) {
-            uuids.add(Database.generateDocumentId());
+            uuids.add(Misc.CreateUUID());
         }
         Map<String, Object> result = new HashMap<String, Object>();
         result.put("uuids", uuids);
@@ -1695,7 +1695,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                         outStatus.setCode(Status.BAD_REQUEST);
                         return null;
                     }
-                    docID = Database.generateDocumentId();
+                    docID = Misc.CreateUUID();
                 }
             }
             // PUT's revision ID comes from the JSON body.

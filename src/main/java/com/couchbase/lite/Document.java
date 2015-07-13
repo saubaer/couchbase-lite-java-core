@@ -358,8 +358,8 @@ public class Document {
      * A delegate that can be used to listen for Document changes.
      */
     @InterfaceAudience.Public
-    public static interface ChangeListener {
-        public void changed(ChangeEvent event);
+    public interface ChangeListener {
+        void changed(ChangeEvent event);
     }
 
     /**
@@ -406,6 +406,9 @@ public class Document {
         if (properties != null && properties.containsKey("_id")) {
             newId = (String) properties.get("_id");
         }
+
+        //Map<String, Object> nuProperties = properties.
+
 
         if (newId != null && !newId.equalsIgnoreCase(getId())) {
             Log.w(Database.TAG, "Trying to put wrong _id to this: %s properties: %s", this, properties);
@@ -501,19 +504,20 @@ public class Document {
      * @exclude
      */
     @InterfaceAudience.Private
-    /* package */ void revisionAdded(DocumentChange change, boolean notify) {
-
-        RevisionInternal rev = change.getWinningRevision();
-        if (rev == null) {
+    protected void revisionAdded(DocumentChange change, boolean notify) {
+        String revID = change.getWinningRevisionID();
+        if (revID == null) {
             return;  // current revision didn't change
         }
 
-        if (currentRevision != null && !rev.getRevId().equals(currentRevision.getId())) {
-            if (rev.isDeleted()) {
+        if (currentRevision != null && !revID.equals(currentRevision.getId())) {
+            RevisionInternal rev = change.getWinningRevisionIfKnown();
+            if(rev == null)
+                forgetCurrentRevision();
+            else if (rev.isDeleted())
                 currentRevision = null;
-            } else {
+            else
                 currentRevision = new SavedRevision(this, rev);
-            }
         }
 
         if (notify) {

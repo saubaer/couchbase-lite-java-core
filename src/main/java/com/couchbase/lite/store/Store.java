@@ -266,22 +266,25 @@ public interface Store {
      * @param validationBlock If non-nil, this block will be called before the revision is added.
      *                        It's given the parent revision, with its properties if available, and can reject
      *                        the operation by returning an error status.
+     * @param outStatus       On return a status will be stored here. Note that on success, the
+     *                        status should be 201 for a created revision but 200 for a deletion.
      * @return The new revision, with its revID and sequence filled in, or nil on error.
      */
-    /*
     RevisionInternal add(String docID,
                          String prevRevID,
                          Map<String, Object> properties,
                          boolean deleting,
                          boolean allowConflict,
-                         StorageValidation validationBlock)
+                         StorageValidation validationBlock,
+                         Status outStatus)
             throws CouchbaseLiteException;
-        */
+    /*
     RevisionInternal putRevision(RevisionInternal oldRev,
                                  String prevRevId,
                                  boolean allowConflict,
                                  Status resultStatus)
             throws CouchbaseLiteException;
+    */
 
     /**
      * Inserts an already-existing revision (with its revID), plus its ancestry, into a document.
@@ -393,14 +396,14 @@ public interface Store {
 
     RevisionList getAllRevisions(String docId, long docNumericID, boolean onlyCurrent);
 
-    long getDocNumericID(String docId);
+    //long getDocNumericID(String docId);
 
     Status garbageCollectAttachments();
 
-    String winningRevIDOfDoc(long docNumericId, AtomicBoolean outIsDeleted, AtomicBoolean outIsConflict)
-            throws CouchbaseLiteException;
+    //String winningRevIDOfDocNumericID(long docNumericId, AtomicBoolean outIsDeleted, AtomicBoolean outIsConflict)
+    //        throws CouchbaseLiteException;
 
-    boolean existsDocumentWithIDAndRev(String docId, String revId);
+    boolean existsDocument(String docID, String revID);
 
     void copyAttachmentNamedFromSequenceToSequence(String name, long fromSeq, long toSeq)
             throws CouchbaseLiteException;

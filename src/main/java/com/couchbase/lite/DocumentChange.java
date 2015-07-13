@@ -1,8 +1,7 @@
 package com.couchbase.lite;
 
-import com.couchbase.lite.internal.RevisionInternal;
 import com.couchbase.lite.internal.InterfaceAudience;
-import com.couchbase.lite.util.Log;
+import com.couchbase.lite.internal.RevisionInternal;
 
 import java.net.URL;
 
@@ -10,22 +9,21 @@ import java.net.URL;
  * Provides details about a Document change.
  */
 public class DocumentChange {
+    private RevisionInternal addedRevision;
+    private String winningRevisionID;
+    private boolean isConflict;
+    private URL source;
 
     /**
      * @exclude
      */
     @InterfaceAudience.Private
-    public DocumentChange(RevisionInternal addedRevision, RevisionInternal winningRevision, boolean isConflict, URL sourceUrl) {
+    public DocumentChange(RevisionInternal addedRevision, String winningRevisionID, boolean isConflict, URL source) {
         this.addedRevision = addedRevision;
-        this.winningRevision = winningRevision;
+        this.winningRevisionID = winningRevisionID;
         this.isConflict = isConflict;
-        this.sourceUrl = sourceUrl;
+        this.source = source;
     }
-
-    private RevisionInternal addedRevision;
-    private RevisionInternal winningRevision;
-    private boolean isConflict;
-    private URL sourceUrl;
 
     @InterfaceAudience.Public
     public String getDocumentId() {
@@ -39,7 +37,7 @@ public class DocumentChange {
 
     @InterfaceAudience.Public
     public boolean isCurrentRevision() {
-        return winningRevision != null && addedRevision.getRevId().equals(winningRevision.getRevId());
+        return winningRevisionID != null && addedRevision.getRevId().equals(winningRevisionID);
     }
 
     @InterfaceAudience.Public
@@ -48,8 +46,13 @@ public class DocumentChange {
     }
 
     @InterfaceAudience.Public
-    public URL getSourceUrl() {
-        return sourceUrl;
+    public URL getSource() {
+        return source;
+    }
+
+    @InterfaceAudience.Public
+    public String toString() {
+        return String.format("%s[%s]", this.getClass().getName(), addedRevision);
     }
 
     /**
@@ -64,24 +67,16 @@ public class DocumentChange {
      * @exclude
      */
     @InterfaceAudience.Private
-    RevisionInternal getWinningRevision() {
-        return winningRevision;
+    protected RevisionInternal getWinningRevisionIfKnown() {
+        return isCurrentRevision() ? addedRevision : null;
     }
 
-    @InterfaceAudience.Public
-    public String toString() {
-        try {
-            return String.format(
-                    "docId: %s rev: %s isConflict: %s sourceUrl: %s",
-                    getDocumentId(),
-                    getRevisionId(),
-                    isConflict(),
-                    getSourceUrl()
-            );
-        } catch (Exception e) {
-            Log.e(Database.TAG, "Error in DocumentChange.toString()", e);
-            return super.toString();
-        }
+    /**
+     * @exclude
+     */
+    @InterfaceAudience.Private
+    public String getWinningRevisionID() {
+        return winningRevisionID;
     }
 
     protected void reduceMemoryUsage() {

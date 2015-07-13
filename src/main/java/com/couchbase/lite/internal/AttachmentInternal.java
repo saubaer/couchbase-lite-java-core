@@ -2,6 +2,9 @@ package com.couchbase.lite.internal;
 
 import com.couchbase.lite.BlobKey;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * A simple container for attachment metadata.
  */
@@ -25,6 +28,12 @@ public class AttachmentInternal {
         this.contentType = contentType;
     }
 
+    public AttachmentInternal(String name, Map<String, Object> attachInfo) {
+        this(name, (String)attachInfo.get("content_type"));
+
+        // TODO
+    }
+
     public boolean isValid() {
         if (encoding != AttachmentEncoding.AttachmentEncodingNone) {
             if (encodedLength == 0 && length > 0) {
@@ -38,6 +47,25 @@ public class AttachmentInternal {
             return false;
         }
         return true;
+    }
+
+    public Map<String, Object> asStubDictionary(){
+        Map<String, Object> dict = new HashMap<String, Object>();
+        dict.put("stub", true);
+        dict.put("digest", blobKey.base64Digest());
+        dict.put("content_type", contentType);
+        dict.put("revpos", revpos);
+        dict.put("length", length);
+        if(encodedLength > 0)
+            dict.put("encoded_length", encodedLength);
+        switch (encoding){
+            case AttachmentEncodingGZIP:
+                dict.put("encoding", "gzip");
+                break;
+            case AttachmentEncodingNone:
+                break;
+        }
+        return dict;
     }
 
     public String getName() {

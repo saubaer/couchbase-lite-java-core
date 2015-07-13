@@ -41,18 +41,15 @@ public interface StoreDelegate {
      */
     String generateRevID(byte[] json, boolean deleted, String prevRevID);
 
+
+
+
     // TODO: Temporary!!!
     Map<String, Validator> getValidations();
 
     void validateRevision(RevisionInternal newRev,
                           RevisionInternal oldRev,
                           String parentRevID)
-            throws CouchbaseLiteException;
-
-    RevisionInternal winner(long docNumericID,
-                            String oldWinningRevID,
-                            boolean oldWinnerWasDeletion,
-                            RevisionInternal newRev)
             throws CouchbaseLiteException;
 
     boolean runFilter(ReplicationFilter filter,

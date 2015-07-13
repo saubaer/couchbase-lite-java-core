@@ -2,7 +2,6 @@ package com.couchbase.lite.support;
 
 import com.couchbase.lite.Database;
 import com.couchbase.lite.Manager;
-import com.couchbase.lite.internal.AttachmentInternal;
 import com.couchbase.lite.internal.InterfaceAudience;
 import com.couchbase.lite.internal.RevisionInternal;
 import com.couchbase.lite.util.Log;
@@ -13,18 +12,16 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Created by hideki on 6/17/15.
  */
 public class RevisionUtils {
 
+    /*
     private static final Set<String> KNOWN_SPECIAL_KEYS;
 
     static {
@@ -40,7 +37,7 @@ public class RevisionUtils {
         KNOWN_SPECIAL_KEYS.add("_local_seq");
         KNOWN_SPECIAL_KEYS.add("_removed");
     }
-
+    */
     public static Map<String, Object> makeRevisionHistoryDict(List<RevisionInternal> history) {
         if (history == null) {
             return null;
@@ -115,36 +112,48 @@ public class RevisionUtils {
      * @exclude
      */
     @InterfaceAudience.Private
-    public static byte[] encodeDocumentJSON(RevisionInternal rev) {
+    public static byte[] asCanonicalJSON(RevisionInternal rev) {
+        return asCanonicalJSON(rev.getProperties());
+    }
 
-        Map<String, Object> origProps = rev.getProperties();
-        if (origProps == null) {
+    static List<String> specialKeysToRemove = Arrays.asList(
+            "_id",
+            "_rev",
+            "_deleted",
+            "_revisions",
+            "_revs_info",
+            "_conflicts",
+            "_deleted_conflicts",
+            "_local_seq");
+
+    static List<String> specialKeysToLeave = Arrays.asList(
+            "_attachments",
+            "_removed");
+
+    /**
+     * @exclude
+     */
+    @InterfaceAudience.Private
+    public static byte[] asCanonicalJSON(Map<String, Object> props) {
+        if (props == null) {
             return null;
         }
 
-        List<String> specialKeysToLeave = Arrays.asList(
-                "_removed",
-                "_replication_id",
-                "_replication_state",
-                "_replication_state_time");
-
-        // Don't allow any "_"-prefixed keys. Known ones we'll ignore, unknown ones are an error.
-        Map<String, Object> properties = new HashMap<String, Object>(origProps.size());
-        for (String key : origProps.keySet()) {
+        Map<String, Object> properties = new HashMap<String, Object>(props.size());
+        for (String key : props.keySet()) {
             boolean shouldAdd = false;
-            if (key.startsWith("_")) {
-                if (!KNOWN_SPECIAL_KEYS.contains(key)) {
-                    Log.e(Database.TAG, "Database: Invalid top-level key '%s' in document to be inserted", key);
-                    return null;
-                }
-                if (specialKeysToLeave.contains(key)) {
-                    shouldAdd = true;
-                }
-            } else {
+            if (!key.startsWith("_")) {
                 shouldAdd = true;
+            } else if (specialKeysToRemove.contains(key)) {
+                shouldAdd = false;
+            } else if (specialKeysToLeave.contains(key)) {
+                shouldAdd = true;
+            } else {
+                Log.e(Database.TAG, "CBLDatabase: Invalid top-level key '%s' in document to be inserted", key);
+                return null;
             }
             if (shouldAdd) {
-                properties.put(key, origProps.get(key));
+                properties.put(key, props.get(key));
             }
         }
 
@@ -152,31 +161,29 @@ public class RevisionUtils {
         try {
             json = Manager.getObjectMapper().writeValueAsBytes(properties);
         } catch (Exception e) {
-            Log.e(Database.TAG, "Error serializing " + rev + " to JSON", e);
+            Log.e(Database.TAG, "Error serializing " + properties + " to JSON", e);
         }
         return json;
     }
 
-
     /**
      * in CBLDatabase+Insertion.m
-     * - (NSString*) generateIDForRevision: (CBL_Revision*)rev
+     * - (NSString*) generateRevID: (CBL_Revision*)rev
      *                            withJSON: (NSData*)json
      *                         attachments: (NSDictionary*)attachments
      *                              prevID: (NSString*) prevID
      * @exclude
      */
     @InterfaceAudience.Private
-    public static String generateIDForRevision(RevisionInternal rev, byte[] json, Map<String, AttachmentInternal> attachments, String previousRevisionId) {
-
+    public static String generateRevID(byte[] json, boolean deleted, String prevID) {
         MessageDigest md5Digest;
 
         // Revision IDs have a generation count, a hyphen, and a UUID.
 
         int generation = 0;
-        if(previousRevisionId != null) {
-            generation = RevisionInternal.generationFromRevID(previousRevisionId);
-            if(generation == 0) {
+        if (prevID != null) {
+            generation = RevisionInternal.generationFromRevID(prevID);
+            if (generation == 0) {
                 return null;
             }
         }
@@ -195,8 +202,8 @@ public class RevisionUtils {
         // previous revision id
         int length = 0;
         byte[] prevIDUTF8 = null;
-        if (previousRevisionId != null) {
-            prevIDUTF8 = previousRevisionId.getBytes(Charset.forName("UTF-8"));
+        if (prevID != null) {
+            prevIDUTF8 = prevID.getBytes(Charset.forName("UTF-8"));
             length = prevIDUTF8.length;
         }
         if (length > 0xFF) {
@@ -210,17 +217,9 @@ public class RevisionUtils {
         }
 
         // single byte - deletion flag
-        int isDeleted = ((rev.isDeleted() != false) ? 1 : 0);
+        int isDeleted = ((deleted != false) ? 1 : 0);
         byte[] deletedByte = new byte[] { (byte) isDeleted };
         md5Digest.update(deletedByte);
-
-        // all attachment keys
-        List<String> attachmentKeys = new ArrayList<String>(attachments.keySet());
-        Collections.sort(attachmentKeys);
-        for (String key : attachmentKeys) {
-            AttachmentInternal attachment = attachments.get(key);
-            md5Digest.update(attachment.getBlobKey().getBytes());
-        }
 
         // json
         if (json != null) {
