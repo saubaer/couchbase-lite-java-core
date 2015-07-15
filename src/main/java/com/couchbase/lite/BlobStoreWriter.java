@@ -26,10 +26,10 @@ public class BlobStoreWriter {
     /** After finishing, this is the key for looking up the blob through the CBL_BlobStore. */
     private BlobKey blobKey =  null;
 
-    /** After finishing, store md5 digest result here */
+    /** After finishing, store md5 getDigest result here */
     private byte[] md5DigestResult =  null;
 
-    /** Message digest for sha1 that is updated as data is appended */
+    /** Message getDigest for sha1 that is updated as data is appended */
     private MessageDigest sha1Digest =  null;
     private MessageDigest md5Digest =  null;
 
@@ -121,25 +121,22 @@ public class BlobStoreWriter {
         tempFile.delete();
     }
 
-    /** Installs a finished blob into the store. */
-    public void install()
-    {
-        if (tempFile == null) {
-            return;  // already installed
-        }
-
+    /**
+     * Installs a finished blob into the store.
+     */
+    public boolean install() {
+        if (tempFile == null)
+            return true;  // already installed
         // Move temp file to correct location in blob store:
-        String destPath = store.pathForKey(blobKey);
+        String destPath = store.getRawPathForKey(blobKey);
         File destPathFile = new File(destPath);
-        boolean result = tempFile.renameTo(destPathFile);
-
-        // If the move fails, assume it means a file with the same name already exists; in that
-        // case it must have the identical contents, so we're still OK.
-        if (result == false) {
+        if(tempFile.renameTo(destPathFile))
+            // If the move fails, assume it means a file with the same name already exists; in that
+            // case it must have the identical contents, so we're still OK.
+            tempFile = null;
+        else
             cancel();
-        }
-
-        tempFile = null;
+        return true;
     }
 
     public String mD5DigestString() {

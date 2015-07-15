@@ -6,7 +6,6 @@
 //
 package com.couchbase.lite.store;
 
-import com.couchbase.lite.Attachment;
 import com.couchbase.lite.BlobKey;
 import com.couchbase.lite.ChangesOptions;
 import com.couchbase.lite.CouchbaseLiteException;
@@ -436,7 +435,7 @@ public class SQLiteStore implements Store {
         Cursor cursor = null;
         try {
             cursor = null;
-            String cols = "revid, deleted, sequence, no_attachments";
+            String cols = "revid, deleted, sequence";
             if (!contentOptions.contains(Database.TDContentOptions.TDNoBody)) {
                 cols += ", json";
             }
@@ -460,14 +459,11 @@ public class SQLiteStore implements Store {
                 boolean deleted = (cursor.getInt(1) > 0);
                 result = new RevisionInternal(docID, revID, deleted);
                 result.setSequence(cursor.getLong(2));
+
+
                 if (!contentOptions.equals(EnumSet.of(Database.TDContentOptions.TDNoBody))) {
-                    byte[] json = null;
-                    if (!contentOptions.contains(Database.TDContentOptions.TDNoBody)) {
-                        json = cursor.getBlob(4);
-                    }
-                    if (cursor.getInt(3) > 0) // no_attachments == true
-                        contentOptions.add(Database.TDContentOptions.TDNoAttachments);
-                    expandStoredJSONIntoRevisionWithAttachments(json, result, contentOptions);
+                    byte[] json = cursor.getBlob(3);
+                    result.setJSON(json);
                 }
             }
         } catch (SQLException e) {
@@ -481,32 +477,30 @@ public class SQLiteStore implements Store {
     }
 
     @Override
-    public RevisionInternal loadRevisionBody(RevisionInternal rev,
-                                             EnumSet<Database.TDContentOptions> contentOptions)
+    public RevisionInternal loadRevisionBody(RevisionInternal rev)
             throws CouchbaseLiteException {
-        if (rev.getBody() != null &&
-                contentOptions == EnumSet.noneOf(Database.TDContentOptions.class) &&
-                rev.getSequence() != 0) {
+        if (rev.getBody() != null && rev.getSequence() != 0) // no-op
             return rev;
-        }
 
-        if ((rev.getDocId() == null) || (rev.getRevId() == null)) {
-            Log.e(TAG, "Error loading revision body");
-            throw new CouchbaseLiteException(Status.DUPLICATE);
-        }
+        assert (rev.getDocID() != null && rev.getRevID() != null);
+
+        long docNumericID = getDocNumericID(rev.getDocID());
+        if(docNumericID <= 0)
+            throw new CouchbaseLiteException(Status.NOT_FOUND);
 
         Cursor cursor = null;
         Status result = new Status(Status.NOT_FOUND);
         try {
-            // TODO: on ios this query is:
-            // TODO: "SELECT sequence, json FROM revs WHERE doc_id=? AND revid=? LIMIT 1"
-            String sql = "SELECT sequence, json FROM revs, docs WHERE revid=? AND docs.docid=? AND revs.doc_id=docs.doc_id LIMIT 1";
-            String[] args = {rev.getRevId(), rev.getDocId()};
+            String sql = "SELECT sequence, json FROM revs WHERE doc_id=? AND revid=? LIMIT 1";
+            String[] args = {String.valueOf(docNumericID), rev.getRevID()};
             cursor = storageEngine.rawQuery(sql, args);
             if (cursor.moveToNext()) {
-                result.setCode(Status.OK);
-                rev.setSequence(cursor.getLong(0));
-                expandStoredJSONIntoRevisionWithAttachments(cursor.getBlob(1), rev, contentOptions);
+                byte[] json = cursor.getBlob(1);
+                if(json!=null) {
+                    result.setCode(Status.OK);
+                    rev.setSequence(cursor.getLong(0));
+                    rev.setJSON(json);
+                }
             }
         } catch (SQLException e) {
             Log.e(TAG, "Error loading revision body", e);
@@ -534,11 +528,11 @@ public class SQLiteStore implements Store {
                     "SELECT parent FROM revs WHERE sequence=?",
                     new String[]{Long.toString(seq)});
         } else {
-            long docNumericID = getDocNumericID(rev.getDocId());
+            long docNumericID = getDocNumericID(rev.getDocID());
             if (docNumericID <= 0) {
                 return null;
             }
-            String[] args = new String[]{Long.toString(docNumericID), rev.getRevId()};
+            String[] args = new String[]{Long.toString(docNumericID), rev.getRevID()};
             seq = SQLiteUtils.longForQuery(storageEngine,
                     "SELECT parent FROM revs WHERE doc_id=? and revid=?", args);
         }
@@ -559,7 +553,7 @@ public class SQLiteStore implements Store {
             if (cursor.moveToNext()) {
                 String revId = cursor.getString(0);
                 boolean deleted = (cursor.getInt(1) > 0);
-                result = new RevisionInternal(rev.getDocId(), revId, deleted/*, this*/);
+                result = new RevisionInternal(rev.getDocID(), revId, deleted/*, this*/);
                 result.setSequence(seq);
             }
         } finally {
@@ -573,8 +567,8 @@ public class SQLiteStore implements Store {
      */
     @Override
     public List<RevisionInternal> getRevisionHistory(RevisionInternal rev) {
-        String docId = rev.getDocId();
-        String revId = rev.getRevId();
+        String docId = rev.getDocID();
+        String revId = rev.getRevID();
         assert ((docId != null) && (revId != null));
 
         long docNumericId = getDocNumericID(docId);
@@ -679,7 +673,7 @@ public class SQLiteStore implements Store {
         if (generation <= 1)
             return null;
 
-        long docNumericID = getDocNumericID(rev.getDocId());
+        long docNumericID = getDocNumericID(rev.getDocID());
         if (docNumericID <= 0)
             return null;
 
@@ -718,7 +712,7 @@ public class SQLiteStore implements Store {
 
         if (revIDs.size() == 0)
             return null;
-        String docId = rev.getDocId();
+        String docId = rev.getDocID();
         long docNumericID = getDocNumericID(docId);
         if (docNumericID <= 0)
             return null;
@@ -1051,13 +1045,10 @@ public class SQLiteStore implements Store {
 
                 RevisionInternal rev = new RevisionInternal(cursor.getString(2), cursor.getString(3), (cursor.getInt(4) > 0));
                 rev.setSequence(cursor.getLong(0));
-                if (includeDocs) {
-                    expandStoredJSONIntoRevisionWithAttachments(cursor.getBlob(5), rev,
-                            options.getContentOptions());
-                }
-                if (delegate.runFilter(filter, filterParams, rev)) {
+                if (includeDocs)
+                    rev.setJSON(cursor.getBlob(5));
+                if (delegate.runFilter(filter, filterParams, rev))
                     changes.add(rev);
-                }
                 cursor.moveToNext();
             }
         } catch (SQLException e) {
@@ -1325,8 +1316,8 @@ public class SQLiteStore implements Store {
         String winningRevID = null;
         boolean inConflict = false;
 
-        String docId = inRev.getDocId();
-        String revId = inRev.getRevId();
+        String docId = inRev.getDocID();
+        String revId = inRev.getRevID();
         if (!Document.isValidDocumentId(docId) || (revId == null)) {
             throw new CouchbaseLiteException(Status.BAD_REQUEST);
         }
@@ -1339,7 +1330,7 @@ public class SQLiteStore implements Store {
             history = new ArrayList<String>();
             history.add(revId);
             historyCount = 1;
-        } else if (!history.get(0).equals(inRev.getRevId())) {
+        } else if (!history.get(0).equals(inRev.getRevID())) {
             throw new CouchbaseLiteException(Status.BAD_REQUEST);
         }
 
@@ -1359,7 +1350,7 @@ public class SQLiteStore implements Store {
                 }
                 localRevs = new HashMap<String, RevisionInternal>();
                 for (RevisionInternal r : localRevsList) {
-                    localRevs.put(r.getRevId(), r);
+                    localRevs.put(r.getRevID(), r);
                 }
             }
 
@@ -1434,8 +1425,8 @@ public class SQLiteStore implements Store {
                         String prevRevID = (history.size() >= 2) ? history.get(1) : null;
                         Map<String, AttachmentInternal> attachments = delegate.getAttachmentsFromRevision(inRev, prevRevID);
                         if (attachments != null) {
-                            delegate.processAttachmentsForRevision(attachments, inRev, localParentSequence);
-                            delegate.stubOutAttachmentsInRevision(attachments, inRev);
+                            //delegate.processAttachmentsForRevision(attachments, inRev, localParentSequence);
+                            //delegate.stubOutAttachmentsInRevision(attachments, inRev);
                         }
                     }
                 }
@@ -1667,7 +1658,7 @@ public class SQLiteStore implements Store {
 
     @Override
     public RevisionInternal putLocalRevision(RevisionInternal revision, String prevRevID) throws CouchbaseLiteException {
-        String docID = revision.getDocId();
+        String docID = revision.getDocID();
         if (!docID.startsWith("_local/")) {
             throw new CouchbaseLiteException(Status.BAD_REQUEST);
         }
@@ -1883,103 +1874,6 @@ public class SQLiteStore implements Store {
         return result;
     }
 
-    /**
-     * Constructs an "_attachments" dictionary for a revision, to be inserted in its JSON body.
-     */
-    @Override
-    public Map<String, Object> getAttachmentsDictForSequenceWithContent(long sequence,
-                                                                        EnumSet<Database.TDContentOptions> contentOptions) {
-        return null;
-        /*
-        assert (sequence > 0);
-
-        Cursor cursor = null;
-
-        String args[] = {Long.toString(sequence)};
-        try {
-            cursor = storageEngine.rawQuery(
-                    "SELECT filename, key, type, encoding, length, encoded_length, revpos FROM attachments WHERE sequence=?",
-                    args);
-
-            if (!cursor.moveToNext()) {
-                return null;
-            }
-
-            Map<String, Object> result = new HashMap<String, Object>();
-
-            while (!cursor.isAfterLast()) {
-
-                boolean dataSuppressed = false;
-                int length = cursor.getInt(4);
-
-                AttachmentInternal.AttachmentEncoding encoding = AttachmentInternal.AttachmentEncoding.values()[cursor.getInt(3)];
-                int encodedLength = cursor.getInt(5);
-
-                byte[] keyData = cursor.getBlob(1);
-                BlobKey key = new BlobKey(keyData);
-                String digestString = "sha1-" + Base64.encodeBytes(keyData);
-                String dataBase64 = null;
-                if (contentOptions.contains(Database.TDContentOptions.TDIncludeAttachments)) {
-                    if (contentOptions.contains(Database.TDContentOptions.TDBigAttachmentsFollow) &&
-                            length >= Database.kBigAttachmentLength) {
-                        dataSuppressed = true;
-                    } else {
-                        byte[] data = delegate.getAttachments().blobForKey(key);
-                        if (data != null) {
-                            dataBase64 = Base64.encodeBytes(data);  // <-- very expensive
-                        } else {
-                            Log.w(TAG, "Error loading attachment.  Sequence: %s", sequence);
-                        }
-                    }
-                }
-
-                String encodingStr = null;
-                if (encoding == AttachmentInternal.AttachmentEncoding.AttachmentEncodingGZIP) {
-                    // NOTE: iOS decode if attachment is included int the dict.
-                    encodingStr = "gzip";
-                }
-
-                Map<String, Object> attachment = new HashMap<String, Object>();
-                if (!(dataBase64 != null || dataSuppressed)) {
-                    attachment.put("stub", true);
-                }
-                if (dataBase64 != null) {
-                    attachment.put("data", dataBase64);
-                }
-                if (dataSuppressed == true) {
-                    attachment.put("follows", true);
-                }
-                attachment.put("digest", digestString);
-                String contentType = cursor.getString(2);
-                attachment.put("content_type", contentType);
-                if (encodingStr != null) {
-                    attachment.put("encoding", encodingStr);
-                }
-                attachment.put("length", length);
-                if (encodingStr != null && encodedLength >= 0) {
-                    attachment.put("encoded_length", encodedLength);
-                }
-                attachment.put("revpos", cursor.getInt(6));
-
-                String filename = cursor.getString(0);
-                result.put(filename, attachment);
-
-                cursor.moveToNext();
-            }
-
-            return result;
-
-        } catch (SQLException e) {
-            Log.e(TAG, "Error getting attachments for sequence", e);
-            return null;
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-        */
-    }
-
     @Override
     public RevisionList getAllRevisions(String docID, boolean onlyCurrent) {
         long docNumericId = getDocNumericID(docID);
@@ -1990,55 +1884,6 @@ public class SQLiteStore implements Store {
         } else {
             return getAllRevisions(docID, docNumericId, onlyCurrent);
         }
-    }
-
-    /**
-     * Deletes obsolete attachments from the sqliteDb and blob store.
-     */
-    @Override
-    public Status garbageCollectAttachments() {
-        // First delete attachment rows for already-cleared revisions:
-        // OPT: Could start after last sequence# we GC'd up to
-
-        return new Status(Status.OK);
-        /*
-        try {
-            storageEngine.execSQL("DELETE FROM attachments WHERE sequence IN " +
-                    "(SELECT sequence from revs WHERE json IS null)");
-        } catch (SQLException e) {
-            Log.e(TAG, "Error deleting attachments", e);
-        }
-
-        // Now collect all remaining attachment IDs and tell the store to delete all but these:
-        Cursor cursor = null;
-        try {
-            cursor = storageEngine.rawQuery("SELECT DISTINCT key FROM attachments", null);
-
-            cursor.moveToNext();
-            List<BlobKey> allKeys = new ArrayList<BlobKey>();
-            while (!cursor.isAfterLast()) {
-                BlobKey key = new BlobKey(cursor.getBlob(0));
-                allKeys.add(key);
-                cursor.moveToNext();
-            }
-
-            int numDeleted = delegate.getAttachments().deleteBlobsExceptWithKeys(allKeys);
-            if (numDeleted < 0) {
-                return new Status(Status.INTERNAL_SERVER_ERROR);
-            }
-
-            Log.v(TAG, "Deleted %d attachments", numDeleted);
-
-            return new Status(Status.OK);
-        } catch (SQLException e) {
-            Log.e(TAG, "Error finding attachment keys in use", e);
-            return new Status(Status.INTERNAL_SERVER_ERROR);
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-        */
     }
 
     /**
@@ -2089,50 +1934,8 @@ public class SQLiteStore implements Store {
         return revID;
     }
 
-    @Override
     public boolean existsDocument(String docID, String revID) {
         return getDocument(docID, revID, EnumSet.of(Database.TDContentOptions.TDNoBody)) != null;
-    }
-
-
-    @Override
-    public void copyAttachmentNamedFromSequenceToSequence(String name, long fromSeq, long toSeq)
-            throws CouchbaseLiteException {
-        /*
-        assert (name != null);
-        assert (toSeq > 0);
-        if (fromSeq < 0) {
-            throw new CouchbaseLiteException(Status.NOT_FOUND);
-        }
-
-        Cursor cursor = null;
-
-        String[] args = {Long.toString(toSeq), name, Long.toString(fromSeq), name};
-        try {
-            storageEngine.execSQL("INSERT INTO attachments (sequence, filename, key, type, length, revpos) " +
-                    "SELECT ?, ?, key, type, length, revpos FROM attachments " +
-                    "WHERE sequence=? AND filename=?", args);
-            cursor = storageEngine.rawQuery("SELECT changes()", null);
-            cursor.moveToNext();
-            int rowsUpdated = cursor.getInt(0);
-            if (rowsUpdated == 0) {
-                // Oops. This means a glitch in our attachment-management or pull code,
-                // or else a bug in the upstream server.
-                Log.w(TAG, "Can't find inherited attachment %s from seq# %s to copy to %s", name, fromSeq, toSeq);
-                throw new CouchbaseLiteException(Status.NOT_FOUND);
-            } else {
-                return;
-            }
-        } catch (SQLException e) {
-            Log.e(TAG, "Error copying attachment", e);
-            throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-        */
-
     }
 
     @Override
@@ -2187,29 +1990,11 @@ public class SQLiteStore implements Store {
                                                           String revID, boolean deleted,
                                                           long sequence,
                                                           EnumSet<Database.TDContentOptions> contentOptions) {
-        /*
+
         RevisionInternal rev = new RevisionInternal(docID, revID, deleted);
         rev.setSequence(sequence);
-        Map<String, Object> extra = extraPropertiesForRevision(rev, contentOptions);
-        if (json == null||json.length==0||(json.length==2 && json.equals("{}"))) {
-            return extra;
-        }
-
+        rev.setMissing(json == null);
         Map<String, Object> docProperties = null;
-        try {
-            docProperties = Manager.getObjectMapper().readValue(json, Map.class);
-            docProperties.putAll(extra);
-        } catch (Exception e) {
-           Log.e(TAG, String.format("Unparseable JSON for doc=%s, rev=%s: %s", docID, revID, new String(json)), e);
-        }
-        return docProperties;
-        */
-
-        Map<String, Object> docProperties;
-
-        RevisionInternal rev = new RevisionInternal(docID, revID, deleted);
-        rev.setSequence(sequence);
-
         if (json == null || json.length == 0 || (json.length == 2 && json.equals("{}"))) {
             docProperties = new HashMap<String, Object>();
         } else {
@@ -2221,134 +2006,12 @@ public class SQLiteStore implements Store {
             }
         }
 
-        // TODO - once applied new Attachment, following two lines could be removed.
-        Map<String, Object> extra = extraPropertiesForRevision(rev, contentOptions);
-        docProperties.putAll(extra);
-
         docProperties.put("_id", docID);
         docProperties.put("_rev", revID);
         if (deleted)
             docProperties.put("_deleted", true);
 
         return docProperties;
-    }
-
-    /**
-     * Returns the content and MIME type of an attachment
-     */
-    @Override
-    public Attachment getAttachmentForSequence(long sequence, String filename) throws CouchbaseLiteException {
-        return null;
-        /*
-        assert (sequence > 0);
-        assert (filename != null);
-
-        Cursor cursor = null;
-
-        String[] args = {Long.toString(sequence), filename};
-        try {
-            cursor = storageEngine.rawQuery("SELECT key, type FROM attachments WHERE sequence=? AND filename=?", args);
-
-            if (!cursor.moveToNext()) {
-                throw new CouchbaseLiteException(Status.NOT_FOUND);
-            }
-
-            byte[] keyData = cursor.getBlob(0);
-            //TODO add checks on key here? (ios version)
-            BlobKey key = new BlobKey(keyData);
-            InputStream contentStream = delegate.getAttachments().blobStreamForKey(key);
-            if (contentStream == null) {
-                Log.e(TAG, "Failed to load attachment");
-                throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
-            } else {
-                Attachment result = new Attachment(contentStream, cursor.getString(1));
-                result.setGZipped(delegate.getAttachments().isGZipped(key));
-                return result;
-            }
-
-        } catch (SQLException e) {
-            throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-        */
-    }
-
-    /**
-     * Returns the location of an attachment's file in the blob store.
-     */
-    @Override
-    public String getAttachmentPathForSequence(long sequence, String filename) throws CouchbaseLiteException {
-        return null;
-        /*
-        assert (sequence > 0);
-        assert (filename != null);
-        Cursor cursor = null;
-        String filePath = null;
-
-        String args[] = {Long.toString(sequence), filename};
-        try {
-            cursor = storageEngine.rawQuery(
-                    "SELECT key, type, encoding FROM attachments WHERE sequence=? AND filename=?", args);
-
-            if (!cursor.moveToNext()) {
-                throw new CouchbaseLiteException(Status.NOT_FOUND);
-            }
-
-            byte[] keyData = cursor.getBlob(0);
-            BlobKey key = new BlobKey(keyData);
-            filePath = delegate.getAttachments().pathForKey(key);
-            return filePath;
-
-        } catch (SQLException e) {
-            throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-        */
-    }
-
-    @Override
-    public void insertAttachmentForSequenceWithNameAndType(long sequence, String name,
-                                                           String contentType, int revpos,
-                                                           BlobKey key, long length,
-                                                           AttachmentInternal.AttachmentEncoding encoding,
-                                                           long encodedLength)
-            throws CouchbaseLiteException {
-        /*
-        try {
-            ContentValues args = new ContentValues();
-            args.put("sequence", sequence);
-            args.put("filename", name);
-            args.put("type", contentType);
-            args.put("revpos", revpos);
-            if (key != null) {
-                args.put("key", key.getBytes());
-            }
-            if (length >= 0) {
-                args.put("length", length);
-            }
-            if (encoding == AttachmentInternal.AttachmentEncoding.AttachmentEncodingGZIP) {
-                args.put("encoding", encoding.ordinal());
-                if (encodedLength >= 0) {
-                    args.put("encoded_length", encodedLength);
-                }
-            }
-            long result = storageEngine.insert("attachments", null, args);
-            if (result == -1) {
-                String msg = "Insert attachment failed (returned -1)";
-                Log.e(TAG, msg);
-                throw new CouchbaseLiteException(msg, Status.INTERNAL_SERVER_ERROR);
-            }
-        } catch (SQLException e) {
-            Log.e(TAG, "Error inserting attachment", e);
-            throw new CouchbaseLiteException(e, Status.INTERNAL_SERVER_ERROR);
-        }
-        */
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -2457,22 +2120,6 @@ public class SQLiteStore implements Store {
     }
 
     /**
-     * Inserts the _id, _rev and _attachments properties into the JSON data and stores it in rev.
-     * Rev must already have its revID and sequence properties set.
-     */
-    private void expandStoredJSONIntoRevisionWithAttachments(byte[] json, RevisionInternal rev,
-                                                             EnumSet<Database.TDContentOptions> contentOptions) {
-        Map<String, Object> extra = extraPropertiesForRevision(rev, contentOptions);
-        if (json != null && json.length > 0) {
-            rev.setJson(appendDictToJSON(json, extra));
-        } else {
-            rev.setProperties(extra);
-            if (json == null)
-                rev.setMissing(true);
-        }
-    }
-
-    /**
      * Splices the contents of an NSDictionary into JSON data (that already represents a dict), without parsing the JSON.
      */
     private byte[] appendDictToJSON(byte[] json, Map<String, Object> dict) {
@@ -2498,95 +2145,6 @@ public class SQLiteStore implements Store {
         newJson[jsonLength - 1] = ',';  // Add a ','
         System.arraycopy(extraJSON, 1, newJson, jsonLength, extraLength - 1);
         return newJson;
-    }
-
-    /**
-     * Inserts the _id, _rev and _attachments properties into the JSON data and stores it in rev.
-     * Rev must already have its revID and sequence properties set.
-     */
-    private Map<String, Object> extraPropertiesForRevision(RevisionInternal rev, EnumSet<Database.TDContentOptions> contentOptions) {
-
-        String docId = rev.getDocId();
-        String revId = rev.getRevId();
-        long sequenceNumber = rev.getSequence();
-        assert (revId != null);
-        assert (sequenceNumber > 0);
-
-        Map<String, Object> attachmentsDict = null;
-        // Get attachment metadata, and optionally the contents:
-        if (!contentOptions.contains(Database.TDContentOptions.TDNoAttachments)) {
-            attachmentsDict = getAttachmentsDictForSequenceWithContent(sequenceNumber, contentOptions);
-        }
-
-        // Get more optional stuff to put in the properties:
-        //OPT: This probably ends up making redundant SQL queries if multiple options are enabled.
-        Long localSeq = null;
-        if (contentOptions.contains(Database.TDContentOptions.TDIncludeLocalSeq)) {
-            localSeq = sequenceNumber;
-        }
-
-        Map<String, Object> revHistory = null;
-        if (contentOptions.contains(Database.TDContentOptions.TDIncludeRevs)) {
-            revHistory = RevisionUtils.makeRevisionHistoryDict(getRevisionHistory(rev));
-        }
-
-        List<Object> revsInfo = null;
-        if (contentOptions.contains(Database.TDContentOptions.TDIncludeRevsInfo)) {
-            revsInfo = new ArrayList<Object>();
-            List<RevisionInternal> revHistoryFull = getRevisionHistory(rev);
-            for (RevisionInternal historicalRev : revHistoryFull) {
-                Map<String, Object> revHistoryItem = new HashMap<String, Object>();
-                String status = "available";
-                if (historicalRev.isDeleted()) {
-                    status = "deleted";
-                }
-                if (historicalRev.isMissing()) {
-                    status = "missing";
-                }
-                revHistoryItem.put("rev", historicalRev.getRevId());
-                revHistoryItem.put("status", status);
-                revsInfo.add(revHistoryItem);
-            }
-        }
-
-        List<String> conflicts = null;
-        if (contentOptions.contains(Database.TDContentOptions.TDIncludeConflicts)) {
-            RevisionList revs = getAllRevisions(docId, true);
-            if (revs.size() > 1) {
-                conflicts = new ArrayList<String>();
-                for (RevisionInternal aRev : revs) {
-                    if (aRev.equals(rev) || aRev.isDeleted()) {
-                        // don't add in this case
-                    } else {
-                        conflicts.add(aRev.getRevId());
-                    }
-                }
-            }
-        }
-
-        Map<String, Object> result = new HashMap<String, Object>();
-        result.put("_id", docId);
-        result.put("_rev", revId);
-        if (rev.isDeleted()) {
-            result.put("_deleted", true);
-        }
-        if (attachmentsDict != null) {
-            result.put("_attachments", attachmentsDict);
-        }
-        if (localSeq != null) {
-            result.put("_local_seq", localSeq);
-        }
-        if (revHistory != null) {
-            result.put("_revisions", revHistory);
-        }
-        if (revsInfo != null) {
-            result.put("_revs_info", revsInfo);
-        }
-        if (conflicts != null) {
-            result.put("_conflicts", conflicts);
-        }
-
-        return result;
     }
 
     private boolean sequenceHasAttachments(long sequence) {
@@ -2656,7 +2214,7 @@ public class SQLiteStore implements Store {
         try {
             ContentValues args = new ContentValues();
             args.put("doc_id", docNumericID);
-            args.put("revid", rev.getRevId());
+            args.put("revid", rev.getRevID());
             if (parentSequence != 0) {
                 args.put("parent", parentSequence);
             }
@@ -2710,7 +2268,7 @@ public class SQLiteStore implements Store {
                 byte[] json = cursor.getBlob(2);
                 rev = new RevisionInternal(docID, revID, deleted);
                 rev.setSequence(sequence);
-                rev.setJson(json);
+                rev.setJSON(json);
             }
         } finally {
             cursor.close();
@@ -2723,7 +2281,7 @@ public class SQLiteStore implements Store {
         RevisionInternal rev = new RevisionInternal(docID, revID, deleted);
         rev.setSequence(sequence);
         if (json != null)
-            rev.setJson(json);
+            rev.setJSON(json);
         return rev;
     }
 
@@ -2737,14 +2295,13 @@ public class SQLiteStore implements Store {
         return rev;
     }
 
-
     private String winner(long docNumericID,
                           String oldWinningRevID,
                           boolean oldWinnerWasDeletion,
                           RevisionInternal newRev)
             throws CouchbaseLiteException {
 
-        String newRevID = newRev.getRevId();
+        String newRevID = newRev.getRevID();
         if (oldWinningRevID == null) {
             return newRevID;
         }

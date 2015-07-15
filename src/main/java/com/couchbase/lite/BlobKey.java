@@ -24,7 +24,7 @@ import java.io.IOException;
 import java.util.Arrays;
 
 /**
- * Key identifying a data blob. This happens to be a SHA-1 digest.
+ * Key identifying a data blob. This happens to be a SHA-1 getDigest.
  * @exclude
  */
 public class BlobKey {
@@ -41,7 +41,7 @@ public class BlobKey {
     /**
      * Constructor
      *
-     * @param base64Digest string with base64'd digest, with leading "sha1-" attached.
+     * @param base64Digest string with base64'd getDigest, with leading "sha1-" attached.
      *                     eg, "sha1-LKJ32423JK..."
      */
     public BlobKey(String base64Digest) {
@@ -49,10 +49,10 @@ public class BlobKey {
     }
 
     /**
-     * Decode base64'd digest into a byte array that is suitable for use
+     * Decode base64'd getDigest into a byte array that is suitable for use
      * as a blob key.
      *
-     * @param base64Digest string with base64'd digest, with leading "sha1-" attached.
+     * @param base64Digest string with base64'd getDigest, with leading "sha1-" attached.
      *                     eg, "sha1-LKJ32423JK..."
      * @return a byte[] blob key
      */
@@ -127,5 +127,15 @@ public class BlobKey {
 
     public String base64Digest() {
         return String.format("sha1-%s", Base64.encodeBytes(bytes));
+    }
+
+    public boolean hasBlobKey(){
+        if(bytes!=null){
+            for(int i = 0; i < bytes.length; i++){
+                if(bytes[i] != 0)
+                    return true;
+            }
+        }
+        return false;
     }
 }

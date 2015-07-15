@@ -449,7 +449,7 @@ public class Document {
         if (internalRevision == null) {
             return null;
         }
-        else if (currentRevision != null && internalRevision.getRevId().equals(currentRevision.getId())) {
+        else if (currentRevision != null && internalRevision.getRevID().equals(currentRevision.getId())) {
             return currentRevision;
         }
         else {

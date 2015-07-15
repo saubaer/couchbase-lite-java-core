@@ -145,7 +145,7 @@ public class MultipartDocumentReader implements MultipartReaderDelegate {
                     ((Boolean)attachment.get("follows")).booleanValue() == true) {
 
                 // Check that each attachment in the JSON corresponds to an attachment MIME body.
-                // Look up the attachment by either its MIME Content-Disposition header or MD5 digest:
+                // Look up the attachment by either its MIME Content-Disposition header or MD5 getDigest:
                 String digest = (String) attachment.get("digest");
                 BlobStoreWriter writer = attachmentsByName.get(attachmentName);
                 if (writer != null) {
@@ -154,7 +154,7 @@ public class MultipartDocumentReader implements MultipartReaderDelegate {
                     if (digest != null &&
                             !digest.equals(actualDigest) &&
                             !digest.equals(writer.sHA1DigestString())) {
-                        String errMsg = String.format("Attachment '%s' has incorrect MD5 digest (%s; should be either %s or %s)",
+                        String errMsg = String.format("Attachment '%s' has incorrect MD5 getDigest (%s; should be either %s or %s)",
                                 attachmentName, digest, actualDigest, writer.sHA1DigestString());
                         throw new IllegalStateException(errMsg);
                     }
@@ -175,8 +175,8 @@ public class MultipartDocumentReader implements MultipartReaderDelegate {
                     attachment.put("digest", writer.mD5DigestString());
                 }
                 else {
-                    // No digest metatata, no filename in MIME body; give up:
-                    String errMsg = String.format("Attachment '%s' has no digest metadata; cannot identify MIME body",
+                    // No getDigest metatata, no filename in MIME body; give up:
+                    String errMsg = String.format("Attachment '%s' has no getDigest metadata; cannot identify MIME body",
                             attachmentName);
                     throw new IllegalStateException(errMsg);
                 }

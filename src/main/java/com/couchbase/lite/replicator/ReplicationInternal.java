@@ -1405,8 +1405,8 @@ abstract class ReplicationInternal implements BlockingQueueListener{
                 if (xformed == null)
                     return null;
                 if (xformed != rev) {
-                    assert(xformed.getDocId().equals(rev.getDocId()));
-                    assert(xformed.getRevId().equals(rev.getRevId()));
+                    assert(xformed.getDocID().equals(rev.getDocID()));
+                    assert(xformed.getRevID().equals(rev.getRevID()));
                     assert(xformed.getProperties().get("_revisions").equals(rev.getProperties().get("_revisions")));
                     if (xformed.getProperties().get("_attachments") != null) {
                         // Insert 'revpos' properties into any attachments added by the callback:
@@ -1429,7 +1429,7 @@ abstract class ReplicationInternal implements BlockingQueueListener{
                     rev = xformed;
                 }
             }catch (Exception e) {
-                Log.w(Log.TAG_SYNC,"%s: Exception transforming a revision of doc '%s", e, this, rev.getDocId());
+                Log.w(Log.TAG_SYNC,"%s: Exception transforming a revision of doc '%s", e, this, rev.getDocID());
             }
         }
         return rev;

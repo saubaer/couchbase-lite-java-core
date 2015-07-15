@@ -53,7 +53,7 @@ public final class SavedRevision extends Revision {
      */
     @InterfaceAudience.Private
     /* package */ SavedRevision(Database database, RevisionInternal revision) {
-        this(database.getDocument(revision.getDocId()), revision);
+        this(database.getDocument(revision.getDocID()), revision);
     }
 
     /**
@@ -78,7 +78,7 @@ public final class SavedRevision extends Revision {
         List<SavedRevision> revisions = new ArrayList<SavedRevision>();
         List<RevisionInternal> internalRevisions = getDatabase().getRevisionHistory(revisionInternal);
         for (RevisionInternal internalRevision : internalRevisions) {
-            if (internalRevision.getRevId().equals(getId())) {
+            if (internalRevision.getRevID().equals(getId())) {
                 revisions.add(this);
             }
             else {
@@ -108,13 +108,13 @@ public final class SavedRevision extends Revision {
     @InterfaceAudience.Public
     public SavedRevision createRevision(Map<String, Object> properties) throws CouchbaseLiteException {
         boolean allowConflict = false;
-        return document.putProperties(properties, revisionInternal.getRevId(), allowConflict);
+        return document.putProperties(properties, revisionInternal.getRevID(), allowConflict);
     }
 
     @Override
     @InterfaceAudience.Public
     public String getId() {
-        return revisionInternal.getRevId();
+        return revisionInternal.getRevID();
     }
 
     @Override
@@ -166,7 +166,7 @@ public final class SavedRevision extends Revision {
         if ( parRev == null){
             return null;
         }
-        return parRev.getRevId();
+        return parRev.getRevID();
     }
 
     @Override

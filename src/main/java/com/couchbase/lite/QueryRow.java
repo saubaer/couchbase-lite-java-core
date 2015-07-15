@@ -139,7 +139,7 @@ public class QueryRow {
         // Failing that, there's no document linking, so use the regular old _sourceDocID
         String docID = null;
         if (documentRevision != null)
-            docID = documentRevision.getDocId();
+            docID = documentRevision.getDocID();
         if (docID == null) {
             if(value != null) {
                 Map<String, Object> props = (Map<String, Object>) value;
@@ -190,7 +190,7 @@ public class QueryRow {
         // or the '_rev' or 'rev' value key:
         String rev = null;
         if (documentRevision != null)
-            rev = documentRevision.getRevId();
+            rev = documentRevision.getRevID();
         if (rev == null) {
             if (value instanceof Map) {
                 Map<String, Object> mapValue = (Map<String, Object>) value;

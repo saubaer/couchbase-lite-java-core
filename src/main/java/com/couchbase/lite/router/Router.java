@@ -1,7 +1,6 @@
 package com.couchbase.lite.router;
 
 import com.couchbase.lite.AsyncTask;
-import com.couchbase.lite.Attachment;
 import com.couchbase.lite.BlobStoreWriter;
 import com.couchbase.lite.ChangesOptions;
 import com.couchbase.lite.CouchbaseLiteException;
@@ -1152,7 +1151,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                 Body docBody = new Body(doc);
                 if (noNewEdits) {
                     rev = new RevisionInternal(docBody);
-                    if (rev.getRevId() == null || rev.getDocId() == null || !rev.getDocId().equals(docID)) {
+                    if (rev.getRevID() == null || rev.getDocID() == null || !rev.getDocID().equals(docID)) {
                         status = new Status(Status.BAD_REQUEST);
                     } else {
                         List<String> history = Database.parseCouchDBRevisionHistory(doc);
@@ -1169,7 +1168,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                     result.put("ok", true);
                     result.put("id", docID);
                     if (rev != null) {
-                        result.put("rev", rev.getRevId());
+                        result.put("rev", rev.getRevID());
                     }
                 } else if (allOrNothing) {
                     return status;  // all_or_nothing backs out if there's any error
@@ -1226,7 +1225,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         // Return the missing revs in a somewhat different format:
         Map<String, Object> diffs = new HashMap<String, Object>();
         for (RevisionInternal rev : revs) {
-            String docID = rev.getDocId();
+            String docID = rev.getDocID();
 
             List<String> missingRevs = null;
             Map<String, Object> idObj = (Map<String, Object>) diffs.get(docID);
@@ -1241,7 +1240,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                 idObj.put("missing", missingRevs);
                 diffs.put(docID, idObj);
             }
-            missingRevs.add(rev.getRevId());
+            missingRevs.add(rev.getRevID());
         }
 
         // FIXME add support for possible_ancestors
@@ -1328,14 +1327,14 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
 
     private Map<String, Object> changesDictForRevision(RevisionInternal rev) {
         Map<String, Object> changesDict = new HashMap<String, Object>();
-        changesDict.put("rev", rev.getRevId());
+        changesDict.put("rev", rev.getRevID());
 
         List<Map<String, Object>> changes = new ArrayList<Map<String, Object>>();
         changes.add(changesDict);
 
         Map<String, Object> result = new HashMap<String, Object>();
         result.put("seq", rev.getSequence());
-        result.put("id", rev.getDocId());
+        result.put("id", rev.getDocID());
         result.put("changes", changes);
         if (rev.isDeleted()) {
             result.put("deleted", true);
@@ -1367,10 +1366,10 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         String lastDocID = null;
         Map<String, Object> lastEntry = null;
         for (RevisionInternal rev : changes) {
-            String docID = rev.getDocId();
+            String docID = rev.getDocID();
             if (docID.equals(lastDocID)) {
                 Map<String, Object> changesDict = new HashMap<String, Object>();
-                changesDict.put("rev", rev.getRevId());
+                changesDict.put("rev", rev.getRevID());
                 List<Map<String, Object>> inchanges = (List<Map<String, Object>>) lastEntry.get("changes");
                 inchanges.add(changesDict);
             } else {
@@ -1569,7 +1568,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                 if (rev == null) {
                     return new Status(Status.NOT_FOUND);
                 }
-                if (cacheWithEtag(rev.getRevId())) {
+                if (cacheWithEtag(rev.getRevID())) {
                     return new Status(Status.NOT_MODIFIED);  // set ETag and check conditional GET
                 }
 
@@ -1587,7 +1586,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                         } catch (CouchbaseLiteException e) {
                             if (e.getCBLStatus().getCode() != Status.INTERNAL_SERVER_ERROR) {
                                 Map<String, Object> dict = new HashMap<String, Object>();
-                                dict.put("missing", rev.getRevId());
+                                dict.put("missing", rev.getRevID());
                                 result.add(dict);
                             } else {
                                 throw e;
@@ -1633,7 +1632,10 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         }
     }
 
+
     public Status do_GET_Attachment(Database _db, String docID, String _attachmentName) {
+        //TODO
+    /*
         try {
             // http://wiki.apache.org/couchdb/HTTP_Document_API#GET
             EnumSet<TDContentOptions> options = getContentOptions();
@@ -1643,7 +1645,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
             if (rev == null) {
                 return new Status(Status.NOT_FOUND);
             }
-            if (cacheWithEtag(rev.getRevId())) {
+            if (cacheWithEtag(rev.getRevID())) {
                 return new Status(Status.NOT_MODIFIED);  // set ETag and check conditional GET
             }
 
@@ -1668,6 +1670,8 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         } catch (CouchbaseLiteException e) {
             return e.getCBLStatus();
         }
+       */
+        return null;
     }
 
     /**
@@ -1766,12 +1770,12 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
 
         RevisionInternal rev = update(_db, docID, body, deleting, false, status);
         if (status.isSuccessful()) {
-            cacheWithEtag(rev.getRevId());  // set ETag
+            cacheWithEtag(rev.getRevID());  // set ETag
             if (!deleting) {
                 URL url = connection.getURL();
                 String urlString = url.toExternalForm();
                 if (docID != null) {
-                    urlString += "/" + rev.getDocId();
+                    urlString += "/" + rev.getDocID();
                     try {
                         url = new URL(urlString);
                     } catch (MalformedURLException e) {
@@ -1782,8 +1786,8 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
             }
             Map<String, Object> result = new HashMap<String, Object>();
             result.put("ok", true);
-            result.put("id", rev.getDocId());
-            result.put("rev", rev.getRevId());
+            result.put("id", rev.getDocID());
+            result.put("rev", rev.getRevID());
             connection.setResponseBody(new Body(result));
         }
         return status;
@@ -1804,7 +1808,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
             // PUT with new_edits=false -- forcible insertion of existing revision:
             Body body = new Body(bodyDict);
             RevisionInternal rev = new RevisionInternal(body);
-            if (rev.getRevId() == null || rev.getDocId() == null || !rev.getDocId().equals(docID)) {
+            if (rev.getRevID() == null || rev.getDocID() == null || !rev.getDocID().equals(docID)) {
                 throw new CouchbaseLiteException(Status.BAD_REQUEST);
             }
             List<String> history = Database.parseCouchDBRevisionHistory(body.getProperties());
@@ -1824,7 +1828,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
             revID = getRevIDFromIfMatchHeader();
         }
 
-        BlobStoreWriter body = new BlobStoreWriter(db.getAttachments());
+        BlobStoreWriter body = new BlobStoreWriter(db.getAttachmentStore());
         ByteArrayOutputStream dataStream = new ByteArrayOutputStream();
 
         try {
@@ -1836,13 +1840,13 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         }
 
         RevisionInternal rev = db.updateAttachment(attachment, body, connection.getRequestProperty("content-type"), AttachmentInternal.AttachmentEncoding.AttachmentEncodingNone,
-                docID, revID);
+                docID, revID, null);
         Map<String, Object> resultDict = new HashMap<String, Object>();
         resultDict.put("ok", true);
-        resultDict.put("id", rev.getDocId());
-        resultDict.put("rev", rev.getRevId());
+        resultDict.put("id", rev.getDocID());
+        resultDict.put("rev", rev.getRevID());
         connection.setResponseBody(new Body(resultDict));
-        cacheWithEtag(rev.getRevId());
+        cacheWithEtag(rev.getRevID());
         if (contentStream != null) {
             setResponseLocation(connection.getURL());
         }

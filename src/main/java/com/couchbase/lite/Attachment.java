@@ -21,14 +21,14 @@ import com.couchbase.lite.internal.AttachmentInternal;
 import com.couchbase.lite.internal.InterfaceAudience;
 import com.couchbase.lite.util.Log;
 
-import java.io.File;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.zip.GZIPInputStream;
 
 /**
  * A Couchbase Lite Document Attachment.
@@ -39,11 +39,6 @@ public final class Attachment {
      * The owning document revision.
      */
     private Revision revision = null;
-
-    /**
-     * Whether or not this attachment is gzipped
-     */
-    private boolean gzipped = false;
 
     /**
      * The filename.
@@ -81,6 +76,10 @@ public final class Attachment {
         this.metadata = metadata;
     }
 
+    private AttachmentInternal internalAttachment() throws CouchbaseLiteException {
+        return revision.getDatabase().getAttachment(metadata, name);
+    }
+
     /**
      * Get the owning document revision.
      */
@@ -88,7 +87,6 @@ public final class Attachment {
     public Revision getRevision() {
         return revision;
     }
-
 
     /**
      * Get the owning document.
@@ -124,24 +122,7 @@ public final class Attachment {
         if (body != null) {
             return body;
         } else {
-            Database db = revision.getDatabase();
-            long sequence = getAttachmentSequence();
-            if (sequence == 0) {
-                throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
-            }
-            Attachment attachment = db.getAttachmentForSequence(sequence, this.name);
-            body = attachment.getBodyIfNew();
-            if (attachment.getGZipped()) {
-                // Client does not expect a gzipped stream.
-                // Only Router handles gzipped streams and uses getAttachmentForSequence directly.
-                try {
-                    body = new GZIPInputStream(body);
-                } catch (IOException e) {
-                    throw new CouchbaseLiteException(e.getMessage(), Status.STATUS_ATTACHMENT_ERROR);
-                }
-            }
-            gzipped = false;
-            return body;
+            return new ByteArrayInputStream(internalAttachment().getContent());
         }
     }
 
@@ -161,16 +142,11 @@ public final class Attachment {
     @InterfaceAudience.Private
     public URL getContentURL(){
         try {
-            long sequence = getAttachmentSequence();
-            if (sequence > 0) {
-                Database db = revision.getDatabase();
-                String path = db.getAttachmentPathForSequence(sequence, this.name);
-                if (path != null) {
-                    return new File(path).toURI().toURL();
-                }
-            }
-        } catch(Exception e){
-            Log.d(Log.TAG_DATABASE, e.getMessage());
+            return internalAttachment().getContentURL();
+        } catch (MalformedURLException e) {
+            Log.w(Database.TAG, e.toString());
+        } catch (CouchbaseLiteException e) {
+            Log.w(Database.TAG, e.toString());
         }
         return null;
     }
@@ -215,7 +191,7 @@ public final class Attachment {
     /**
      * Goes through an _attachments dictionary and replaces any values that are Attachment objects
      * with proper JSON metadata dicts. It registers the attachment bodies with the blob store and sets
-     * the metadata 'digest' and 'follows' properties accordingly.
+     * the metadata 'getDigest' and 'follows' properties accordingly.
      */
     @InterfaceAudience.Private
     protected static Map<String, Object> installAttachmentBodies(Map<String, Object> attachments, Database database) throws CouchbaseLiteException {
@@ -234,9 +210,9 @@ public final class Attachment {
                     try {
                         writer = blobStoreWriterForBody(body, database);
                     } catch (IOException e) {
-                        throw new CouchbaseLiteException(e.getMessage(), Status.STATUS_ATTACHMENT_ERROR);
+                        throw new CouchbaseLiteException(e.getMessage(), Status.ATTACHMENT_ERROR);
                     }
-                    metadataMutable.put("length", (long)writer.getLength());
+                    metadataMutable.put("length", writer.getLength());
                     metadataMutable.put("digest", writer.mD5DigestString());
                     metadataMutable.put("follows", true);
                     database.rememberAttachmentWriter(writer);
@@ -264,22 +240,5 @@ public final class Attachment {
             throw e;
         }
         return writer;
-    }
-
-    /**
-     * NOTE: getGZipped() can return correct value if Attachment is returned from Database.getAttachmentForSequence(long, String).
-     *       This method should be internal use only.
-     */
-    @InterfaceAudience.Private
-    public boolean getGZipped() {
-        return gzipped;
-    }
-
-    /**
-     * @exclude
-     */
-    @InterfaceAudience.Private
-    public void setGZipped(boolean gzipped) {
-        this.gzipped = gzipped;
     }
 }

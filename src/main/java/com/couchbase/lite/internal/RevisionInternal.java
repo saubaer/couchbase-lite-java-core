@@ -1,14 +1,14 @@
 /**
  * Original iOS version by  Jens Alfke
  * Ported to Android by Marty Schoch
- *
+ * <p/>
  * Copyright (c) 2012 Couchbase, Inc. All rights reserved.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software distributed under the
  * License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
  * either express or implied. See the License for the specific language governing permissions
@@ -30,16 +30,16 @@ import java.util.StringTokenizer;
  */
 public class RevisionInternal {
 
-    private String docId;
-    private String revId;
+    private String docID;
+    private String revID;
     private boolean deleted;
     private boolean missing;
     private Body body;
     private long sequence;
 
-    public RevisionInternal(String docId, String revId, boolean deleted) {
-        this.docId = docId;
-        this.revId = revId;
+    public RevisionInternal(String docID, String revID, boolean deleted) {
+        this.docID = docID;
+        this.revID = revID;
         this.deleted = deleted;
     }
 
@@ -94,8 +94,8 @@ public class RevisionInternal {
         return result;
     }
 
-    public void setJson(byte[] json) {
-        this.body = new Body(json);
+    public void setJSON(byte[] json) {
+        this.body = new Body(json, docID, revID, deleted);
     }
 
     @Override
@@ -103,7 +103,7 @@ public class RevisionInternal {
         boolean result = false;
         if (o instanceof RevisionInternal) {
             RevisionInternal other = (RevisionInternal) o;
-            if (docId.equals(other.docId) && revId.equals(other.revId)) {
+            if (docID.equals(other.docID) && revID.equals(other.revID)) {
                 result = true;
             }
         }
@@ -112,23 +112,23 @@ public class RevisionInternal {
 
     @Override
     public int hashCode() {
-        return docId.hashCode() ^ revId.hashCode();
+        return docID.hashCode() ^ revID.hashCode();
     }
 
-    public String getDocId() {
-        return docId;
+    public String getDocID() {
+        return docID;
     }
 
-    public void setDocId(String docId) {
-        this.docId = docId;
+    public void setDocID(String docID) {
+        this.docID = docID;
     }
 
-    public String getRevId() {
-        return revId;
+    public String getRevID() {
+        return revID;
     }
 
-    public void setRevId(String revId) {
-        this.revId = revId;
+    public void setRevID(String revID) {
+        this.revID = revID;
     }
 
     public boolean isDeleted() {
@@ -155,18 +155,21 @@ public class RevisionInternal {
         this.missing = missing;
     }
 
-    public RevisionInternal copyWithDocID(String docId, String revId) {
-        //assert((docId != null) && (revId != null));
-        assert (docId != null);
-        assert ((this.docId == null) || (this.docId.equals(docId)));
-        RevisionInternal result = new RevisionInternal(docId, revId, deleted);
+    public RevisionInternal copy() {
+        return copyWithDocID(docID, revID);
+    }
+
+    public RevisionInternal copyWithDocID(String docID, String revID) {
+        assert (docID != null);
+        assert ((this.docID == null) || (this.docID.equals(docID)));
+        RevisionInternal result = new RevisionInternal(docID, revID, deleted);
         Map<String, Object> unmodifiableProperties = getProperties();
         Map<String, Object> properties = new HashMap<String, Object>();
         if (unmodifiableProperties != null) {
             properties.putAll(unmodifiableProperties);
         }
-        properties.put("_id", docId);
-        properties.put("_rev", revId);
+        properties.put("_id", docID);
+        properties.put("_rev", revID);
         result.setProperties(properties);
         return result;
     }
@@ -175,7 +178,7 @@ public class RevisionInternal {
         if (body == null) {
             return this;
         }
-        RevisionInternal rev = new RevisionInternal(docId, revId, deleted);
+        RevisionInternal rev = new RevisionInternal(docID, revID, deleted);
         rev.setSequence(sequence);
         rev.setMissing(missing);
         return rev;
@@ -191,7 +194,7 @@ public class RevisionInternal {
 
     @Override
     public String toString() {
-        return "{" + this.docId + " #" + this.revId +  (deleted ? "DEL" : "") + "}";
+        return "{" + this.docID + " #" + this.revID + (deleted ? "DEL" : "") + "}";
     }
 
     /**
@@ -199,7 +202,7 @@ public class RevisionInternal {
      * Extracted from the numeric prefix of the revID.
      */
     public int getGeneration() {
-        return generationFromRevID(revId);
+        return generationFromRevID(revID);
     }
 
     public static int generationFromRevID(String revID) {
@@ -286,7 +289,7 @@ public class RevisionInternal {
             Map<String, Object> editedProperties = null;
             Map<String, Object> attachments = (Map<String, Object>) properties.get("_attachments");
             Map<String, Object> editedAttachments = null;
-            if(attachments != null) {
+            if (attachments != null) {
                 for (String name : attachments.keySet()) {
 
                     Map<String, Object> attachment = new HashMap<String, Object>((Map<String, Object>) attachments.get(name));
@@ -316,9 +319,10 @@ public class RevisionInternal {
     }
 
     public Map<String, Object> getAttachments() {
-        if (getProperties() != null && getProperties().containsKey("_attachments")) {
-            return (Map<String, Object>) getProperties().get("_attachments");
+        Map<String, Object> props = getProperties();
+        if (props != null && props.containsKey("_attachments")) {
+            return (Map<String, Object>)props.get("_attachments");
         }
-        return new HashMap<String, Object>();
+        return null;
     }
 }

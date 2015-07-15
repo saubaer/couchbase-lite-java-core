@@ -20,7 +20,7 @@ public class Misc {
         try {
             md = MessageDigest.getInstance("SHA-1");
         } catch (NoSuchAlgorithmException e) {
-            Log.e(Database.TAG, "Error, SHA-1 digest is unavailable.");
+            Log.e(Database.TAG, "Error, SHA-1 getDigest is unavailable.");
             return null;
         }
         byte[] sha1hash = new byte[40];

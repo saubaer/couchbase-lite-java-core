@@ -259,7 +259,7 @@ public abstract class Revision {
      * @exclude
      */
     @InterfaceAudience.Private
-    /* package */ Map<String, Object> getAttachmentMetadata() {
+    protected Map<String, Object> getAttachmentMetadata() {
         return (Map<String, Object>) getProperty("_attachments");
     }
 
@@ -267,7 +267,7 @@ public abstract class Revision {
      * @exclude
      */
     @InterfaceAudience.Private
-    /* package */ void setParentRevisionID(String parentRevID) {
+    protected void setParentRevisionID(String parentRevID) {
         this.parentRevID = parentRevID;
     }
 
@@ -275,7 +275,7 @@ public abstract class Revision {
      * @exclude
      */
     @InterfaceAudience.Private
-    /* package */ abstract long getSequence();
+    protected abstract long getSequence();
 
     /**
      * Generation number: 1 for a new document, 2 for the 2nd revision, ...
@@ -283,7 +283,7 @@ public abstract class Revision {
      * @exclude
      */
     @InterfaceAudience.Private
-    /* package */ int getGeneration() {
+    protected int getGeneration() {
         return generationFromRevID(getId());
     }
 
@@ -293,11 +293,16 @@ public abstract class Revision {
     @InterfaceAudience.Private
     public static int generationFromRevID(String revID) {
         int generation = 0;
-        int dashPos = revID.indexOf("-");
-        if(dashPos > 0) {
-            generation = Integer.parseInt(revID.substring(0, dashPos));
+        int length = Math.min(revID == null ? 0 : revID.length(), 9);
+        for (int i = 0; i < length; ++i) {
+            char c = revID.charAt(i);
+            if (Character.isDigit(c))
+                generation = 10 * generation + Character.getNumericValue(c);
+            else if (c == '-')
+                return generation;
+            else
+                break;
         }
-        return generation;
+        return 0;
     }
-
 }

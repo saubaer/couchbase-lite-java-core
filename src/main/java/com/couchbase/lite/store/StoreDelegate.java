@@ -6,7 +6,6 @@
 //
 package com.couchbase.lite.store;
 
-import com.couchbase.lite.BlobStore;
 import com.couchbase.lite.CouchbaseLiteException;
 import com.couchbase.lite.DocumentChange;
 import com.couchbase.lite.ReplicationFilter;
@@ -41,9 +40,6 @@ public interface StoreDelegate {
      */
     String generateRevID(byte[] json, boolean deleted, String prevRevID);
 
-
-
-
     // TODO: Temporary!!!
     Map<String, Validator> getValidations();
 
@@ -56,17 +52,7 @@ public interface StoreDelegate {
                       Map<String, Object> filterParams,
                       RevisionInternal rev);
 
-    BlobStore getAttachments();
-
     Map<String, AttachmentInternal> getAttachmentsFromRevision(RevisionInternal rev,
                                                                String prevRevID)
             throws CouchbaseLiteException;
-
-    void processAttachmentsForRevision(Map<String, AttachmentInternal> attachments,
-                                       RevisionInternal rev,
-                                       long parentSequence)
-            throws CouchbaseLiteException;
-
-    void stubOutAttachmentsInRevision(final Map<String, AttachmentInternal> attachments,
-                                      final RevisionInternal rev);
 }

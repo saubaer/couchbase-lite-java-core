@@ -78,7 +78,7 @@ public final class UnsavedRevision extends Revision {
 
     @Override
     @InterfaceAudience.Private
-    /* package */ long getSequence() {
+    protected long getSequence() {
         return 0L;
     }
 

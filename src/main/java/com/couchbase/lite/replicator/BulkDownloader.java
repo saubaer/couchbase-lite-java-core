@@ -269,8 +269,8 @@ public class BulkDownloader extends RemoteRequest implements MultipartReaderDele
                     attsSince = null;
                 }
                 Map<String, Object> mapped = new HashMap<String, Object>();
-                mapped.put("id", source.getDocId());
-                mapped.put("rev", source.getRevId());
+                mapped.put("id", source.getDocID());
+                mapped.put("rev", source.getRevID());
                 mapped.put("atts_since", attsSince);
 
                 return mapped;

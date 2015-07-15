@@ -407,7 +407,7 @@ public class PullerInternal extends ReplicationInternal implements ChangeTracker
         Collection<String> keys = CollectionUtils.transform(bulkRevs,
                 new CollectionUtils.Functor<RevisionInternal, String>() {
                     public String invoke(RevisionInternal rev) {
-                        return rev.getDocId();
+                        return rev.getDocID();
                     }
                 }
         );
@@ -501,7 +501,7 @@ public class PullerInternal extends ReplicationInternal implements ChangeTracker
                     continue;
                 }
 
-                Log.v(Log.TAG_SYNC, "%s: inserting %s %s", this, rev.getDocId(), history);
+                Log.v(Log.TAG_SYNC, "%s: inserting %s %s", this, rev.getDocID(), history);
 
                 // Insert the revision
                 try {
@@ -584,8 +584,8 @@ public class PullerInternal extends ReplicationInternal implements ChangeTracker
         // been added since the latest revisions we have locally.
         // See: http://wiki.apache.org/couchdb/HTTP_Document_API#Getting_Attachments_With_a_Document
         StringBuilder path = new StringBuilder("/");
-        path.append(encodeDocumentId(rev.getDocId()));
-        path.append("?rev=").append(URIUtils.encode(rev.getRevId()));
+        path.append(encodeDocumentId(rev.getDocID()));
+        path.append("?rev=").append(URIUtils.encode(rev.getRevID()));
         path.append("&revs=true&attachments=true");
 
         // If the document has attachments, add an 'atts_since' param with a list of

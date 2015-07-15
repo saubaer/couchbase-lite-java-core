@@ -48,8 +48,8 @@ public class RevisionUtils {
         int start = -1;
         int lastRevNo = -1;
         for (RevisionInternal rev : history) {
-            int revNo = parseRevIDNumber(rev.getRevId());
-            String suffix = parseRevIDSuffix(rev.getRevId());
+            int revNo = parseRevIDNumber(rev.getRevID());
+            String suffix = parseRevIDSuffix(rev.getRevID());
             if (revNo > 0 && suffix.length() > 0) {
                 if (start < 0) {
                     start = revNo;
@@ -70,7 +70,7 @@ public class RevisionUtils {
             // we failed to build sequence, just stuff all the revs in list
             suffixes = new ArrayList<String>();
             for (RevisionInternal rev : history) {
-                suffixes.add(rev.getRevId());
+                suffixes.add(rev.getRevID());
             }
         } else {
             result.put("start", start);
@@ -188,7 +188,7 @@ public class RevisionUtils {
             }
         }
 
-        // Generate a digest for this revision based on the previous revision ID, document JSON,
+        // Generate a getDigest for this revision based on the previous revision ID, document JSON,
         // and attachment digests. This doesn't need to be secure; we just need to ensure that this
         // code consistently generates the same ID given equivalent revisions.
         try {

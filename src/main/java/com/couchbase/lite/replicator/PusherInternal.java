@@ -359,13 +359,13 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
         // <http://wiki.apache.org/couchdb/HttpPostRevsDiff>
         Map<String,List<String>> diffs = new HashMap<String,List<String>>();
         for (RevisionInternal rev : changes) {
-            String docID = rev.getDocId();
+            String docID = rev.getDocID();
             List<String> revs = diffs.get(docID);
             if(revs == null) {
                 revs = new ArrayList<String>();
                 diffs.put(docID, revs);
             }
-            revs.add(rev.getRevId());
+            revs.add(rev.getRevID());
             addPending(rev);
         }
 
@@ -390,12 +390,12 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
                         for (RevisionInternal rev : changes) {
                             // Is this revision in the server's 'missing' list?
                             Map<String, Object> properties = null;
-                            Map<String, Object> revResults = (Map<String, Object>) results.get(rev.getDocId());
+                            Map<String, Object> revResults = (Map<String, Object>) results.get(rev.getDocID());
                             if (revResults == null) {
                                 continue;
                             }
                             List<String> revs = (List<String>) revResults.get("missing");
-                            if (revs == null || !revs.contains(rev.getRevId())) {
+                            if (revs == null || !revs.contains(rev.getRevID())) {
                                 removePending(rev);
                                 continue;
                             }
@@ -525,7 +525,7 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
 
                     // Remove from the pending list all the revs that didn't fail:
                     for (RevisionInternal revisionInternal : changes) {
-                        if (!failedIDs.contains(revisionInternal.getDocId())) {
+                        if (!failedIDs.contains(revisionInternal.getDocID())) {
                             removePending(revisionInternal);
                         }
                     }
@@ -595,10 +595,10 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
                     }
                 }
 
-                BlobStore blobStore = this.db.getAttachments();
+                BlobStore blobStore = this.db.getAttachmentStore();
                 String base64Digest = (String) attachment.get("digest");
                 BlobKey blobKey = new BlobKey(base64Digest);
-                String path = blobStore.pathForKey(blobKey);
+                String path = blobStore.getRawPathForKey(blobKey);
                 File file = new File(path);
                 if (!file.exists()) {
                     Log.w(Log.TAG_SYNC, "Unable to find blob file for blobKey: %s - Skipping upload of multipart revision.", blobKey);
@@ -632,7 +632,7 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
             return false;
         }
 
-        final String path = String.format("/%s?new_edits=false", encodeDocumentId(revision.getDocId()));
+        final String path = String.format("/%s?new_edits=false", encodeDocumentId(revision.getDocID()));
 
         Log.d(Log.TAG_SYNC, "Uploading multipart request.  Revision: %s", revision);
 
@@ -681,7 +681,7 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
             return;
         }
 
-        final String path = String.format("/%s?new_edits=false", encodeDocumentId(rev.getDocId()));
+        final String path = String.format("/%s?new_edits=false", encodeDocumentId(rev.getDocID()));
         Future future = sendAsyncRequest("PUT",
                 path,
                 rev.getProperties(),

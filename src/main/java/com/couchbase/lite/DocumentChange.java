@@ -27,17 +27,17 @@ public class DocumentChange {
 
     @InterfaceAudience.Public
     public String getDocumentId() {
-        return addedRevision.getDocId();
+        return addedRevision.getDocID();
     }
 
     @InterfaceAudience.Public
     public String getRevisionId() {
-        return addedRevision.getRevId();
+        return addedRevision.getRevID();
     }
 
     @InterfaceAudience.Public
     public boolean isCurrentRevision() {
-        return winningRevisionID != null && addedRevision.getRevId().equals(winningRevisionID);
+        return winningRevisionID != null && addedRevision.getRevID().equals(winningRevisionID);
     }
 
     @InterfaceAudience.Public

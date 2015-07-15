@@ -152,10 +152,7 @@ public interface Store {
      * On entry, rev.docID and rev.revID will be valid.
      * On success, rev.body and rev.sequence will be valid.
      */
-    //RevisionInternal loadRevisionBody(RevisionInternal rev) throws CouchbaseLiteException;
-    RevisionInternal loadRevisionBody(RevisionInternal rev,
-                                      EnumSet<Database.TDContentOptions> contentOptions)
-            throws CouchbaseLiteException;
+    RevisionInternal loadRevisionBody(RevisionInternal rev) throws CouchbaseLiteException;
 
     /**
      * Looks up the sequence number of a revision.
@@ -220,7 +217,7 @@ public interface Store {
 
     /**
      * Returns the keys (unique IDs) of all attachments referred to by existing un-compacted
-     * Each revision key is an NSData object containing a CBLBlobKey (raw SHA-1 digest) derived from
+     * Each revision key is an NSData object containing a CBLBlobKey (raw SHA-1 getDigest) derived from
      * the "digest" property of the attachment's metadata.
      */
     Set<BlobKey> findAllAttachmentKeys() throws CouchbaseLiteException;
@@ -391,22 +388,7 @@ public interface Store {
 
     String privateUUID();
 
-    Map<String, Object> getAttachmentsDictForSequenceWithContent(long sequence,
-                                                                 EnumSet<Database.TDContentOptions> contentOptions);
-
     RevisionList getAllRevisions(String docId, long docNumericID, boolean onlyCurrent);
-
-    //long getDocNumericID(String docId);
-
-    Status garbageCollectAttachments();
-
-    //String winningRevIDOfDocNumericID(long docNumericId, AtomicBoolean outIsDeleted, AtomicBoolean outIsConflict)
-    //        throws CouchbaseLiteException;
-
-    boolean existsDocument(String docID, String revID);
-
-    void copyAttachmentNamedFromSequenceToSequence(String name, long fromSeq, long toSeq)
-            throws CouchbaseLiteException;
 
     void deleteLocalDocument(String docID, String revID) throws CouchbaseLiteException;
 
@@ -418,20 +400,4 @@ public interface Store {
                                                    boolean deleted,
                                                    long sequence,
                                                    EnumSet<Database.TDContentOptions> contentOptions);
-
-    Attachment getAttachmentForSequence(long sequence, String filename) throws CouchbaseLiteException;
-
-    String getAttachmentPathForSequence(long sequence, String filename) throws CouchbaseLiteException;
-
-    /**
-     * Returns IDs of local revisions of the same document, that have a lower generation number.
-     * Does not return revisions whose bodies have been compacted away, or deletion markers.
-     * If 'onlyAttachments' is true, only revisions with attachments will be returned.
-     */
-    void insertAttachmentForSequenceWithNameAndType(long sequence, String name, String contentType,
-                                                    int revpos, BlobKey key, long length,
-                                                    AttachmentInternal.AttachmentEncoding encoding,
-                                                    long encodedLength)
-            throws CouchbaseLiteException;
-
 }

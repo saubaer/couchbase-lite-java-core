@@ -37,7 +37,7 @@ import java.util.zip.GZIPInputStream;
 
 /**
  * A persistent content-addressable store for arbitrary-size data blobs.
- * Each blob is stored as a file named by its SHA-1 digest.
+ * Each blob is stored as a file named by its SHA-1 getDigest.
  * @exclude
  */
 public class BlobStore {
@@ -92,7 +92,7 @@ public class BlobStore {
         try {
             md = MessageDigest.getInstance("SHA-1");
         } catch (NoSuchAlgorithmException e) {
-            Log.e(Log.TAG_BLOB_STORE, "Error, SHA-1 digest is unavailable.");
+            Log.e(Log.TAG_BLOB_STORE, "Error, SHA-1 getDigest is unavailable.");
             return null;
         }
         byte[] sha1hash = new byte[40];
@@ -107,7 +107,7 @@ public class BlobStore {
         try {
             md = MessageDigest.getInstance("SHA-1");
         } catch (NoSuchAlgorithmException e) {
-            Log.e(Log.TAG_BLOB_STORE, "Error, SHA-1 digest is unavailable.");
+            Log.e(Log.TAG_BLOB_STORE, "Error, SHA-1 getDigest is unavailable.");
             return null;
         }
         byte[] sha1hash = new byte[40];
@@ -129,8 +129,10 @@ public class BlobStore {
         BlobKey result = new BlobKey(sha1hash);
         return result;
     }
-
-    public String pathForKey(BlobKey key) {
+    public String getBlobPathForKey(BlobKey key){
+        return getRawPathForKey(key);
+    }
+    public String getRawPathForKey(BlobKey key) {
         String hexKey = BlobKey.convertToHex(key.getBytes());
 
         String filename = path + File.separator + hexKey + FILE_EXTENSION;
@@ -138,7 +140,7 @@ public class BlobStore {
         // CBL Android/Java used to use lowercase hex string. But it was inconsistent with CBL iOS.
         // We fixed it in BlobKey.covertToHex().
         // In case user will migrate from older version of CBL to newer version, it causes filename mismatch by upper or lower case.
-        // As pathForKey() method is called from many other functions, file mismatch check is added here.
+        // As getRawPathForKey() method is called from many other functions, file mismatch check is added here.
         File file = new File(filename);
         if(!file.exists()){
             String lowercaseFilename = path + File.separator + hexKey.toLowerCase() + FILE_EXTENSION;
@@ -158,7 +160,7 @@ public class BlobStore {
     }
 
     public long getSizeOfBlob(BlobKey key) {
-        String path = pathForKey(key);
+        String path = getRawPathForKey(key);
         File file = new File(path);
         return file.length();
     }
@@ -176,13 +178,13 @@ public class BlobStore {
     }
 
     public boolean hasBlobForKey(BlobKey key){
-        String path = pathForKey(key);
+        String path = getRawPathForKey(key);
         File file = new File(path);
         return file.isFile() && file.exists();
     }
 
     public byte[] blobForKey(BlobKey key) {
-        String path = pathForKey(key);
+        String path = getRawPathForKey(key);
         File file = new File(path);
         byte[] result = null;
         try {
@@ -194,7 +196,7 @@ public class BlobStore {
     }
 
     public InputStream blobStreamForKey(BlobKey key) {
-        String path = pathForKey(key);
+        String path = getRawPathForKey(key);
         File file = new File(path);
         if(file.canRead()) {
             try {
@@ -228,7 +230,7 @@ public class BlobStore {
 
         BlobKey newKey = keyForBlobFromFile(tmp);
         outKey.setBytes(newKey.getBytes());
-        String path = pathForKey(outKey);
+        String path = getRawPathForKey(outKey);
         File file = new File(path);
 
         if(file.canRead()) {
@@ -245,7 +247,7 @@ public class BlobStore {
     public boolean storeBlob(byte[] data, BlobKey outKey) {
         BlobKey newKey = keyForBlob(data);
         outKey.setBytes(newKey.getBytes());
-        String path = pathForKey(outKey);
+        String path = getRawPathForKey(outKey);
         File file = new File(path);
         if(file.canRead()) {
             return true;
@@ -270,7 +272,6 @@ public class BlobStore {
                 }
             }
         }
-
         return true;
     }
 
@@ -358,7 +359,7 @@ public class BlobStore {
     
     public boolean isGZipped(BlobKey key) {
         int magic = 0;
-        String path = pathForKey(key);
+        String path = getRawPathForKey(key);
         File file = new File(path);
         if (file.canRead()) {
             try {
@@ -373,7 +374,6 @@ public class BlobStore {
     }
 
     public File tempDir() {
-
         File directory = new File(path);
         File tempDirectory = new File(directory, "temp_attachments");
 
@@ -386,5 +386,4 @@ public class BlobStore {
 
         return tempDirectory;
     }
-
 }

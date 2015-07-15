@@ -48,7 +48,7 @@ public class RevisionList extends ArrayList<RevisionInternal> {
         Iterator<RevisionInternal> iterator = iterator();
         while(iterator.hasNext()) {
             RevisionInternal rev = iterator.next();
-            if(docId.equals(rev.getDocId()) && revId.equals(rev.getRevId())) {
+            if(docId.equals(rev.getDocID()) && revId.equals(rev.getRevID())) {
                 return rev;
             }
         }
@@ -61,7 +61,7 @@ public class RevisionList extends ArrayList<RevisionInternal> {
         Iterator<RevisionInternal> iterator = iterator();
         while(iterator.hasNext()) {
             RevisionInternal rev = iterator.next();
-            result.add(rev.getDocId());
+            result.add(rev.getDocID());
         }
 
         return result;
@@ -73,7 +73,7 @@ public class RevisionList extends ArrayList<RevisionInternal> {
         Iterator<RevisionInternal> iterator = iterator();
         while(iterator.hasNext()) {
             RevisionInternal rev = iterator.next();
-            result.add(rev.getRevId());
+            result.add(rev.getRevID());
         }
 
         return result;
@@ -99,7 +99,7 @@ public class RevisionList extends ArrayList<RevisionInternal> {
         Iterator<RevisionInternal> iterator = iterator();
         while(iterator.hasNext()) {
             RevisionInternal rev = iterator.next();
-            if (rev.getDocId() != null && rev.getDocId().equals(docId)) {
+            if (rev.getDocID() != null && rev.getDocID().equals(docId)) {
                 return rev;
             }
         }

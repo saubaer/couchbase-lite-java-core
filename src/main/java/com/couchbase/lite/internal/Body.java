@@ -21,6 +21,7 @@ import com.couchbase.lite.Manager;
 import com.fasterxml.jackson.databind.ObjectWriter;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -43,15 +44,30 @@ public class Body {
         this.object = array;
     }
 
-    public static Body bodyWithProperties(Map<String, Object> properties) {
-        Body result = new Body(properties);
-        return result;
+    public Body(byte[] json, String docID, String revID, boolean deleted){
+
+        Map<String, Object> extra = new HashMap<String, Object>();
+        extra.put("_id", docID);
+        extra.put("_rev", revID);
+        //extra.put("_deleted", deleted?true:null);
+        if(deleted)
+            extra.put("_deleted", true);
+
+        if(json.length < 2){
+            this.object = extra;
+            return;
+        }
+
+        Map<String, Object> props = null;
+        try {
+            props = Manager.getObjectMapper().readValue(json, Map.class);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        props.putAll(extra);
+        this.object = props;
     }
 
-    public static Body bodyWithJSON(byte[] json) {
-        Body result = new Body(json);
-        return result;
-    }
 
     public byte[] getJson() {
         if (json == null) {

@@ -58,7 +58,7 @@ public class Status {
     public static final int UPSTREAM_ERROR = 589;// Error from remote replication server
     public static final int DB_ERROR = 590;// SQLite error
     public static final int CORRUPT_ERROR = 591;// bad data in database
-    public static final int STATUS_ATTACHMENT_ERROR = 592;// problem with attachment store
+    public static final int ATTACHMENT_ERROR = 592;// problem with attachment store
     public static final int CALLBACK_ERROR = 593;// app callback (emit fn, etc.) failed
     public static final int EXCEPTION = 594; // Exception raised/caught
     public static final int DB_BUSY = 595; // SQLite DB is busy (this is recoverable!)

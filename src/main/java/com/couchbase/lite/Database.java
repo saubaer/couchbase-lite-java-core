@@ -77,10 +77,9 @@ public final class Database implements StoreDelegate {
     private static final int MANY_CHANGES_TO_NOTIFY = 5000;
 
     private static ReplicationFilterCompiler filterCompiler;
-    /**
-     * Length that constitutes a 'big' attachment
-     */
-    public static int kBigAttachmentLength = (16 * 1024);
+
+    // Length that constitutes a 'big' attachment
+    public static int kBigAttachmentLength = (2 * 1024);
 
     // Default value for maxRevTreeDepth, the max rev depth to preserve in a prune operation
     public static int DEFAULT_MAX_REVS = 20;
@@ -96,7 +95,7 @@ public final class Database implements StoreDelegate {
     private Map<String, ReplicationFilter> filters;
     private Map<String, Validator> validations;
 
-    private Map<String, BlobStoreWriter> pendingAttachmentsByDigest;
+    private Map<String, Object> pendingAttachmentsByDigest;
     private Set<Replication> activeReplicators;
     private Set<Replication> allReplicators;
 
@@ -129,7 +128,6 @@ public final class Database implements StoreDelegate {
      */
     private PersistentCookieStore persistentCookieStore;
 
-
     /**
      * Constructor
      */
@@ -147,7 +145,6 @@ public final class Database implements StoreDelegate {
         this.activeReplicators = Collections.synchronizedSet(new HashSet());
         this.allReplicators = Collections.synchronizedSet(new HashSet());
     }
-
 
     ///////////////////////////////////////////////////////////////////////////
     // APIs
@@ -246,10 +243,9 @@ public final class Database implements StoreDelegate {
      */
     @InterfaceAudience.Public
     public void compact() throws CouchbaseLiteException {
-        if (store != null) {
+        if (store != null)
             store.compact();
-            store.garbageCollectAttachments();
-        }
+        garbageCollectAttachments();
     }
 
     /**
@@ -339,7 +335,7 @@ public final class Database implements StoreDelegate {
         if (prevRev == null) {
             return false;
         }
-        store.deleteLocalDocument(id, prevRev.getRevId());
+        store.deleteLocalDocument(id, prevRev.getRevID());
         return true;
     }
 
@@ -506,7 +502,7 @@ public final class Database implements StoreDelegate {
         if (prevRev == null) {
             return putLocalRevision(rev, null) != null;
         } else {
-            return putLocalRevision(rev, prevRev.getRevId()) != null;
+            return putLocalRevision(rev, prevRev.getRevID()) != null;
         }
     }
 
@@ -715,12 +711,12 @@ public final class Database implements StoreDelegate {
      * @param prevRevID The parent's revision ID, or nil if this is a new document.
      */
     @InterfaceAudience.Private
-    public String generateRevID(byte[] json, boolean deleted, String prevRevID){
+    public String generateRevID(byte[] json, boolean deleted, String prevRevID) {
         return RevisionUtils.generateRevID(json, deleted, prevRevID);
     }
 
     @InterfaceAudience.Private
-    public BlobStore getAttachments() {
+    public BlobStore getAttachmentStore() {
         return attachments;
     }
 
@@ -754,7 +750,8 @@ public final class Database implements StoreDelegate {
      * AttachmentInternal object, and return a dictionary mapping names->CBL_Attachments.
      */
     @InterfaceAudience.Private
-    public Map<String, AttachmentInternal> getAttachmentsFromRevision(RevisionInternal rev, String prevRevID) throws CouchbaseLiteException {
+    public Map<String, AttachmentInternal> getAttachmentsFromRevision(RevisionInternal rev, String prevRevID)
+            throws CouchbaseLiteException {
 
         Map<String, Object> revAttachments = (Map<String, Object>) rev.getPropertyForKey("_attachments");
         if (revAttachments == null || revAttachments.size() == 0 || rev.isDeleted()) {
@@ -777,26 +774,23 @@ public final class Database implements StoreDelegate {
                 }
                 attachment.setLength(newContents.length);
                 BlobKey outBlobKey = new BlobKey();
-                boolean storedBlob = getAttachments().storeBlob(newContents, outBlobKey);
+                boolean storedBlob = getAttachmentStore().storeBlob(newContents, outBlobKey);
                 attachment.setBlobKey(outBlobKey);
                 if (!storedBlob) {
-                    throw new CouchbaseLiteException(Status.STATUS_ATTACHMENT_ERROR);
+                    throw new CouchbaseLiteException(Status.ATTACHMENT_ERROR);
                 }
-            } else if (attachInfo.containsKey("follows") && ((Boolean) attachInfo.get("follows")).booleanValue() == true) {
+            } else if (attachInfo.containsKey("follows") && ((Boolean) attachInfo.get("follows")).booleanValue()) {
                 // "follows" means the uploader provided the attachment in a separate MIME part.
                 // This means it's already been registered in _pendingAttachmentsByDigest;
                 // I just need to look it up by its "digest" property and install it into the store:
-                installAttachment(attachment, attachInfo);
-            } else {
-                // This item is just a stub; validate and skip it
-                if (((Boolean) attachInfo.get("stub")).booleanValue() == false) {
-                    throw new CouchbaseLiteException("Expected this attachment to be a stub", Status.BAD_ATTACHMENT);
-                }
+                installAttachment(attachment);
+            } else if (attachInfo.containsKey("stub") && ((Boolean) attachInfo.get("stub")).booleanValue()) {
+                // "stub" on an incoming revision means the attachment is the same as in the parent.
                 int revPos = ((Integer) attachInfo.get("revpos")).intValue();
                 if (revPos <= 0) {
                     throw new CouchbaseLiteException("Invalid revpos: " + revPos, Status.BAD_ATTACHMENT);
                 }
-                Map<String, Object> parentAttachments = getAttachments(rev.getDocId(), prevRevID);
+                Map<String, Object> parentAttachments = getAttachments(rev.getDocID(), prevRevID);
                 if (parentAttachments != null && parentAttachments.containsKey(name)) {
                     Map<String, Object> parentAttachment = (Map<String, Object>) parentAttachments.get(name);
                     try {
@@ -812,7 +806,7 @@ public final class Database implements StoreDelegate {
                     } catch (IllegalArgumentException e) {
                         continue;
                     }
-                    if (getAttachments().hasBlobForKey(blobKey)) {
+                    if (getAttachmentStore().hasBlobForKey(blobKey)) {
                         attachment.setBlobKey(blobKey);
                     } else {
                         continue;
@@ -833,7 +827,7 @@ public final class Database implements StoreDelegate {
                 attachment.setEncodedLength(attachment.getLength());
                 if (attachInfo.containsKey("length")) {
                     Number attachmentLength = (Number) attachInfo.get("length");
-                    attachment.setLength(attachmentLength.longValue());
+                    attachment.setLength(attachmentLength.intValue());
                 }
             }
             if (attachInfo.containsKey("revpos")) {
@@ -846,10 +840,105 @@ public final class Database implements StoreDelegate {
         return attachments;
     }
 
+    // #pragma mark - UPDATING _attachments DICTS:
+
+    private static long smallestLength(Map<String, Object> attachment) {
+        long length = 0;
+        Number explicitLength = (Number) attachment.get("length");
+        if (explicitLength != null)
+            length = explicitLength.longValue();
+        explicitLength = (Number) attachment.get("encoded_length");
+        if (explicitLength != null)
+            length = explicitLength.longValue();
+        return length;
+    }
+
     /**
-     * Given a revision, updates its _attachments dictionary for storage in the database.
+     * Modifies a CBL_Revision's _attachments dictionary by adding the "data" property to all
+     * attachments (and removing "stub" and "follows".) GZip-encoded attachments will be unzipped
+     * unless options contains the flag kCBLLeaveAttachmentsEncoded.
+     * @param rev  The revision to operate on. Its _attachments property may be altered.
+     * @param minRevPos  Attachments with a "revpos" less than this will remain stubs.
+     * @param allowFollows  If YES, non-small attachments will get a "follows" key instead of data.
+     * @param decodeAttachments  If YES, attachments with "encoding" properties will be decoded.
+     * @param outStatus  On failure, will be set to the error status.
+     * @return  YES on success, NO on failure.
+     * */
+    protected boolean expandAttachments(final RevisionInternal rev,
+                                        final int minRevPos,
+                                        final boolean allowFollows,
+                                        final boolean decodeAttachments,
+                                        final Status outStatus) {
+        outStatus.setCode(Status.OK);
+
+        rev.mutateAttachments(new Functor<Map<String, Object>, Map<String, Object>>() {
+            public Map<String, Object> invoke(Map<String, Object> attachment) {
+
+                String name = (String) attachment.get("name");
+
+                int revPos = (Integer) attachment.get("revpos");
+                if (revPos < minRevPos && revPos != 0) {
+                    Map<String, Object> map = new HashMap<String, Object>();
+                    map.put("stub", true);
+                    map.put("revpos", revPos);
+                    return map;
+                } else {
+                    Map<String, Object> expanded = new HashMap<String, Object>();
+                    expanded.putAll(attachment);
+                    expanded.remove("stub");
+                    if (decodeAttachments) {
+                        expanded.remove("encoding");
+                        expanded.remove("encoded_length");
+                    }
+
+                    if (allowFollows && smallestLength(expanded) >= kBigAttachmentLength) {
+                        // Data will follow (multipart):
+                        expanded.put("follows", true);
+                        expanded.remove("data");
+                    } else {
+                        // Put data inline:
+                        expanded.remove("follows");
+                        AttachmentInternal attachObj = null;
+                        try {
+                            attachObj = getAttachment(attachment, name);
+                        } catch (CouchbaseLiteException e) {
+                            outStatus.setCode(e.getCBLStatus().getCode());
+                        }
+
+                        if(attachObj == null){
+                            Log.w(TAG, "Can't get attachment '%s' of %s (status %d)", name, rev, outStatus.getCode());
+                            return attachment;
+                        }
+                        byte[] data = decodeAttachments ? attachObj.getContent():attachObj.getEncodedContent();
+                        if(data == null){
+                            Log.w(TAG, "Can't get binary data of attachment '%s' of %s", name, rev);
+                            outStatus.setCode(Status.NOT_FOUND);
+                            return attachment;
+                        }
+                        expanded.put("data", Base64.encodeBytes(data));
+                    }
+                    return expanded;
+                }
+            }
+        });
+
+        return outStatus.getCode() == Status.OK;
+    }
+
+    /**
+     * Scans the rev's _attachments dictionary, adding inline attachment data to the blob-store
+     * and turning all the attachments into stubs.
+     *
+     * in CBLDatabase+Attachments.m
+     * - (BOOL) processAttachmentsForRevision: (CBL_MutableRevision*)rev
+     *                               ancestry: (NSArray*)ancestry
+     *                                 status: (CBLStatus*)outStatus
      */
-    private boolean processAttachmentsForRevision(RevisionInternal rev, List<String> ancestry, final Status outStatus) {
+    private boolean processAttachmentsForRevision(final RevisionInternal rev,
+                                                  final List<String> ancestry,
+                                                  final Status outStatus) {
+        outStatus.setCode(Status.OK);
+
         Map<String, Object> revAttachments = rev.getAttachments();
         if (revAttachments == null)
             return true;  // no-op: no attachments
@@ -862,30 +951,66 @@ public final class Database implements StoreDelegate {
             return true;
         }
 
-        String prevRevID = (ancestry.size() > 0) ? ancestry.get(0) : null;
+        final String prevRevID = (ancestry.size() > 0) ? ancestry.get(0) : null;
         final int generation = Revision.generationFromRevID(prevRevID) + 1;
-        final Map<String, Map<String, Object>> parentAttachments = new HashMap<String, Map<String, Object>>();
+        final Map<String, Object> parentAttachments = new HashMap<String, Object>();
 
         rev.mutateAttachments(new Functor<Map<String, Object>, Map<String, Object>>() {
             public Map<String, Object> invoke(Map<String, Object> attachInfo) {
 
-                String name = (String)attachInfo.get("name");
-                AttachmentInternal attachment = new AttachmentInternal(name, attachInfo);
+                String name = (String) attachInfo.get("name");
+
+                AttachmentInternal attachment;
+                try {
+                    attachment = new AttachmentInternal(name, attachInfo);
+                } catch (CouchbaseLiteException e) {
+                    return null;
+                }
                 if (attachment == null) {
                     return null;
-                //}else if(attachment.encodedContent){
+                } else if (attachment.getEncodedContent() != null) {
+                    // If there's inline attachment data, decode and store it:
+                    BlobKey blobKey = new BlobKey();
+                    if (!attachments.storeBlob(attachment.getEncodedContent(), blobKey)) {
+                        outStatus.setCode(Status.ATTACHMENT_ERROR);
+                        return null;
+                    }
+                    attachment.setBlobKey(blobKey);
                 } else if (attachInfo.containsKey("follows") && ((Boolean) attachInfo.get("follows")).booleanValue()) {
                     // "follows" means the uploader provided the attachment in a separate MIME part.
                     // This means it's already been registered in _pendingAttachmentsByDigest;
                     // I just need to look it up by its "digest" property and install it into the store:
-
-                    // TODO
+                    try {
+                        installAttachment(attachment);
+                    } catch (CouchbaseLiteException e) {
+                        outStatus.setCode(e.getCBLStatus().getCode());
+                        return null;
+                    }
                 } else if (attachInfo.containsKey("stub") && ((Boolean) attachInfo.get("stub")).booleanValue()) {
                     // "stub" on an incoming revision means the attachment is the same as in the parent.
 
-                    // TODO
+                    if (parentAttachments.isEmpty() && prevRevID != null) {
+                        Map<String, Object> _parentAttachments = getAttachments(rev.getDocID(), prevRevID);
+                        if (_parentAttachments == null || _parentAttachments.isEmpty()) {
+                            if (attachments.hasBlobForKey(attachment.getBlobKey())) {
+                                // Parent revision's body isn't known (we are probably pulling a rev along
+                                // with its entire history) but it's OK, we have the attachment already
+                                outStatus.setCode(Status.OK);
+                                return attachInfo;
+                            }
+                            // If parent rev isn't available, look farther back in ancestry:
+                            Map<String, Object> ancestorAttachment = findAttachment(
+                                    name, attachment.getRevpos(), rev.getDocID(), ancestry);
+                            if (ancestorAttachment != null)
+                                return ancestorAttachment;
+                            outStatus.setCode(Status.BAD_ATTACHMENT);
+                            return null;
+                        } else {
+                            parentAttachments.putAll(_parentAttachments);
+                        }
+                    }
 
-                    Map<String, Object> parentAttachment = parentAttachments.get(name);
+                    Map<String, Object> parentAttachment = (Map<String, Object>) parentAttachments.get(name);
                     if (parentAttachment == null) {
                         outStatus.setCode(Status.BAD_ATTACHMENT);
                         return null;
@@ -897,86 +1022,36 @@ public final class Database implements StoreDelegate {
                 if (attachment.getRevpos() == 0) {
                     attachment.setRevpos(generation);
                 } else if (attachment.getRevpos() > generation) {
-                    Log.w(Database.TAG, "Attachment %s has unexpected revpos %d, setting to %d", name, attachment.getRevpos(), generation);
-                    attachment.setRevpos(generation);
+                    outStatus.setCode(Status.BAD_ATTACHMENT);
+                    return null;
                 }
-                assert(attachment.isValid());
+                assert (attachment.isValid());
                 return attachment.asStubDictionary();
             }
         });
-
 
         return !outStatus.isError();
     }
 
     /**
-     * Given a newly-added revision, adds the necessary attachment rows to the sqliteDb and
-     * stores inline attachments into the blob store.
+     * Looks for an attachment with the given revpos in the document's ancestry.
+     * in CBLDatabase+Attachments.m
+     * - (NSDictionary*) findAttachment: (NSString*)name
+     *                           revpos: (unsigned)revpos
+     *                            docID: (NSString*)docID
+     *                         ancestry: (NSArray*)ancestry
      */
-    @InterfaceAudience.Private
-    public void processAttachmentsForRevision(Map<String, AttachmentInternal> attachments, RevisionInternal rev, long parentSequence) throws CouchbaseLiteException {
-
-        assert (rev != null);
-        long newSequence = rev.getSequence();
-        assert (newSequence > parentSequence);
-        int generation = rev.getGeneration();
-        assert (generation > 0);
-
-        // If there are no attachments in the new rev, there's nothing to do:
-        Map<String, Object> revAttachments = null;
-        Map<String, Object> properties = (Map<String, Object>) rev.getProperties();
-        if (properties != null) {
-            revAttachments = (Map<String, Object>) properties.get("_attachments");
-        }
-        if (revAttachments == null || revAttachments.size() == 0 || rev.isDeleted()) {
-            return;
-        }
-
-        for (String name : revAttachments.keySet()) {
-            AttachmentInternal attachment = attachments.get(name);
-            if (attachment != null) {
-                // Determine the revpos, i.e. generation # this was added in. Usually this is
-                // implicit, but a rev being pulled in replication will have it set already.
-                if (attachment.getRevpos() == 0) {
-                    attachment.setRevpos(generation);
-                } else if (attachment.getRevpos() > generation) {
-                    Log.w(Database.TAG, "Attachment %s %s has unexpected revpos %s, setting to %s", rev, name, attachment.getRevpos(), generation);
-                    attachment.setRevpos(generation);
+    private Map<String, Object> findAttachment(String name, long revpos, String docID, List<String> ancestry){
+        for(int i = ancestry.size() - 1; i >= 0; i--){
+            String revID = ancestry.get(i);
+            if(Revision.generationFromRevID(revID) >= revpos){
+                Map<String, Object> attachments = getAttachments(docID, revID);
+                if(attachments != null && attachments.containsKey(name)){
+                    return (Map<String, Object>)attachments.get(name);
                 }
-                // Finally insert the attachment:
-                insertAttachmentForSequence(attachment, newSequence);
-            } else {
-                // It's just a stub, so copy the previous revision's attachment entry:
-                //? Should I enforce that the type and digest (if any) match?
-                store.copyAttachmentNamedFromSequenceToSequence(name, parentSequence, newSequence);
             }
         }
-    }
-
-    @InterfaceAudience.Private
-    public void stubOutAttachmentsInRevision(final Map<String, AttachmentInternal> attachments, final RevisionInternal rev) {
-
-        rev.mutateAttachments(new CollectionUtils.Functor<Map<String, Object>, Map<String, Object>>() {
-            public Map<String, Object> invoke(Map<String, Object> attachment) {
-                if (attachment.containsKey("follows") || attachment.containsKey("data")) {
-                    Map<String, Object> editedAttachment = new HashMap<String, Object>(attachment);
-                    editedAttachment.remove("follows");
-                    editedAttachment.remove("data");
-                    editedAttachment.put("stub", true);
-                    if (!editedAttachment.containsKey("revpos")) {
-                        editedAttachment.put("revpos", rev.getGeneration());
-                    }
-
-                    AttachmentInternal attachmentObject = attachments.get(name);
-                    if (attachmentObject != null) {
-                        editedAttachment.put("length", attachmentObject.getLength());
-                        editedAttachment.put("digest", attachmentObject.getBlobKey().base64Digest());
-                    }
-                    attachment = editedAttachment;
-                }
-                return attachment;
-            }
-        });
+        return null;
     }
 
     @InterfaceAudience.Private
@@ -1040,7 +1115,7 @@ public final class Database implements StoreDelegate {
             return false;
 
         // First-time setup:
-        if(privateUUID() == null){
+        if (privateUUID() == null) {
             store.setInfo("privateUUID", Misc.CreateUUID());
             store.setInfo("publicUUID", Misc.CreateUUID());
         }
@@ -1156,7 +1231,7 @@ public final class Database implements StoreDelegate {
 
     @InterfaceAudience.Private
     public BlobStoreWriter getAttachmentWriter() {
-        return new BlobStoreWriter(getAttachments());
+        return new BlobStoreWriter(getAttachmentStore());
     }
 
     // NOTE: router-only
@@ -1194,16 +1269,8 @@ public final class Database implements StoreDelegate {
 
     @InterfaceAudience.Private
     public RevisionInternal loadRevisionBody(RevisionInternal rev, EnumSet<TDContentOptions> contentOptions) throws CouchbaseLiteException {
-        return store == null ? null : store.loadRevisionBody(rev, contentOptions);
+        return store == null ? null : store.loadRevisionBody(rev);
     }
-
-    /*
-    // Note: unit test only
-    @InterfaceAudience.Private
-    public long getDocNumericID(String docId) {
-        return store == null ? null : store.getDocNumericID(docId);
-    }
-    */
 
     /**
      * NOTE: This method is internal use only (from BulkDownloader and PullerInternal)
@@ -1233,7 +1300,7 @@ public final class Database implements StoreDelegate {
         if (ancestorRevIDs != null && ancestorRevIDs.size() > 0) {
             int n = history.size();
             for (int i = 0; i < n; ++i) {
-                if (ancestorRevIDs.contains(history.get(i).getRevId())) {
+                if (ancestorRevIDs.contains(history.get(i).getRevID())) {
                     history = history.subList(0, i + 1);
                     break;
                 }
@@ -1252,30 +1319,12 @@ public final class Database implements StoreDelegate {
         return store == null ? null : store.getAllDocs(options);
     }
 
-    //Note: This method is used only from unit tests.
-    @InterfaceAudience.Private
-    public void insertAttachmentForSequenceWithNameAndType(InputStream contentStream, long sequence, String name, String contentType, int revpos) throws CouchbaseLiteException {
-        assert (sequence > 0);
-        assert (name != null);
-
-        BlobKey key = new BlobKey();
-        if (!attachments.storeBlobStream(contentStream, key)) {
-            throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
-        }
-        insertAttachmentForSequenceWithNameAndType(
-                sequence,
-                name,
-                contentType,
-                revpos,
-                key);
-    }
-
-    /**
-     * Returns the content and MIME type of an attachment
-     */
-    @InterfaceAudience.Private
-    public Attachment getAttachmentForSequence(long sequence, String filename) throws CouchbaseLiteException {
-        return store == null ? null : store.getAttachmentForSequence(sequence, filename);
+    public AttachmentInternal getAttachment(Map info, String filename) throws CouchbaseLiteException{
+        if (info == null)
+            throw new CouchbaseLiteException(Status.NOT_FOUND);
+        AttachmentInternal attachment = new AttachmentInternal(filename, info);
+        attachment.setDatabase(this);
+        return attachment;
     }
 
     @InterfaceAudience.Private
@@ -1291,12 +1340,12 @@ public final class Database implements StoreDelegate {
                 path = ((BlobStoreWriter) pending).getFilePath();
             } else {
                 BlobKey key = new BlobKey((byte[]) pending);
-                path = attachments.pathForKey(key);
+                path = attachments.getRawPathForKey(key);
             }
         } else {
             // If it's an installed attachment, ask the blob-store for it:
             BlobKey key = new BlobKey(digest);
-            path = attachments.pathForKey(key);
+            path = attachments.getRawPathForKey(key);
         }
 
         URL retval = null;
@@ -1418,96 +1467,95 @@ public final class Database implements StoreDelegate {
         });
     }
 
+    // #pragma mark - MISC.:
+
     /**
      * Updates or deletes an attachment, creating a new document revision in the process.
      * Used by the PUT / DELETE methods called on attachment URLs.
      */
     @InterfaceAudience.Private
-    public RevisionInternal updateAttachment(String filename, BlobStoreWriter body, String contentType, AttachmentInternal.AttachmentEncoding encoding, String docID, String oldRevID) throws CouchbaseLiteException {
+    public RevisionInternal updateAttachment(String filename,
+                                             BlobStoreWriter body,
+                                             String contentType,
+                                             AttachmentInternal.AttachmentEncoding encoding,
+                                             String docID,
+                                             String oldRevID,
+                                             URL source)
+            throws CouchbaseLiteException {
 
-        boolean isSuccessful = false;
+        if (filename == null || filename.length() == 0 ||
+                (body != null && contentType == null) ||
+                (oldRevID != null && docID == null) ||
+                (body != null && docID == null))
+            throw new CouchbaseLiteException(Status.BAD_ATTACHMENT);
 
-        if (filename == null || filename.length() == 0 || (body != null && contentType == null) || (oldRevID != null && docID == null) || (body != null && docID == null)) {
-            throw new CouchbaseLiteException(Status.BAD_REQUEST);
+        RevisionInternal oldRev = new RevisionInternal(docID, oldRevID, false);
+        if (oldRevID != null) {
+            // Load existing revision if this is a replacement:
+            try {
+                loadRevisionBody(oldRev, EnumSet.noneOf(TDContentOptions.class));
+            } catch (CouchbaseLiteException e) {
+                //if (e.getCBLStatus().getCode() == Status.NOT_FOUND && store.existsDocument(docID, null)) {
+                if (e.getCBLStatus().getCode() == Status.NOT_FOUND &&
+                        getDocument(docID, null, EnumSet.noneOf(TDContentOptions.class)) != null){
+                    throw new CouchbaseLiteException(Status.CONFLICT);
+                }
+                throw e;
+            }
+        } else {
+            // If this creates a new doc, it needs a body:
+            oldRev.setBody(new Body(new HashMap<String, Object>()));
         }
 
-        beginTransaction();
-        try {
-            RevisionInternal oldRev = new RevisionInternal(docID, oldRevID, false);
-            if (oldRevID != null) {
+        // Update the _attachments dictionary:
+        Map<String, Object> attachments = new HashMap<String, Object>();
+        if(oldRev.getAttachments() != null)
+            attachments.putAll(oldRev.getAttachments());
+        if (body != null) {
+            BlobKey key = body.getBlobKey();
+            String digest = key.base64Digest();
 
-                // Load existing revision if this is a replacement:
-                try {
-                    loadRevisionBody(oldRev, EnumSet.noneOf(TDContentOptions.class));
-                } catch (CouchbaseLiteException e) {
-                    if (e.getCBLStatus().getCode() == Status.NOT_FOUND && store.existsDocument(docID, null)) {
-                        throw new CouchbaseLiteException(Status.CONFLICT);
-                    }
-                }
+            // TODO: Need to update
+            Map<String, BlobStoreWriter> blobsByDigest = new HashMap<String, BlobStoreWriter>();
+            blobsByDigest.put(digest, body);
+            rememberAttachmentWritersForDigests(blobsByDigest);
 
-            } else {
-                // If this creates a new doc, it needs a body:
-                oldRev.setBody(new Body(new HashMap<String, Object>()));
+            String encodingName = (encoding == AttachmentInternal.AttachmentEncoding.AttachmentEncodingGZIP) ? "gzip" : null;
+            Map<String, Object> dict = new HashMap<String, Object>();
+            dict.put("digest", digest);
+            dict.put("length", body.getLength());
+            dict.put("follows", true);
+            dict.put("content_type", contentType);
+            dict.put("encoding", encodingName);
+            attachments.put(filename, dict);
+        } else {
+            if (oldRevID != null && !attachments.containsKey(filename)) {
+                throw new CouchbaseLiteException(Status.NOT_FOUND);
             }
-
-            // Update the _attachments dictionary:
-            Map<String, Object> oldRevProps = oldRev.getProperties();
-            Map<String, Object> attachments = null;
-            if (oldRevProps != null) {
-                attachments = (Map<String, Object>) oldRevProps.get("_attachments");
-            }
-
-            if (attachments == null)
-                attachments = new HashMap<String, Object>();
-
-            if (body != null) {
-                BlobKey key = body.getBlobKey();
-                String digest = key.base64Digest();
-
-                Map<String, BlobStoreWriter> blobsByDigest = new HashMap<String, BlobStoreWriter>();
-                blobsByDigest.put(digest, body);
-                rememberAttachmentWritersForDigests(blobsByDigest);
-
-                String encodingName = (encoding == AttachmentInternal.AttachmentEncoding.AttachmentEncodingGZIP) ? "gzip" : null;
-                Map<String, Object> dict = new HashMap<String, Object>();
-
-                dict.put("digest", digest);
-                dict.put("length", body.getLength());
-                dict.put("follows", true);
-                dict.put("content_type", contentType);
-                dict.put("encoding", encodingName);
-
-                attachments.put(filename, dict);
-            } else {
-                if (oldRevID != null && !attachments.containsKey(filename)) {
-                    throw new CouchbaseLiteException(Status.NOT_FOUND);
-                }
-                attachments.remove(filename);
-            }
-
-            Map<String, Object> properties = oldRev.getProperties();
-            properties.put("_attachments", attachments);
-            oldRev.setProperties(properties);
-
-
-            // Create a new revision:
-            Status putStatus = new Status();
-            RevisionInternal newRev = putRevision(oldRev, oldRevID, false, putStatus);
-
-            isSuccessful = true;
-            return newRev;
-
-        } catch (SQLException e) {
-            Log.e(TAG, "Error updating attachment", e);
-            throw new CouchbaseLiteException(new Status(Status.INTERNAL_SERVER_ERROR));
-        } finally {
-            endTransaction(isSuccessful);
+            attachments.remove(filename);
         }
+
+
+        Map<String, Object> properties = new HashMap<String, Object>();
+        properties.putAll(oldRev.getProperties());
+        properties.put("_attachments", attachments);
+
+        Status status = new Status(Status.OK);
+        RevisionInternal newRev = put(docID, properties, oldRevID, false, source, status);
+        if(status.isError())
+            throw new CouchbaseLiteException(status.getCode());
+
+        return newRev;
     }
 
     @InterfaceAudience.Private
     public void rememberAttachmentWritersForDigests(Map<String, BlobStoreWriter> blobsByDigest) {
         getPendingAttachmentsByDigest().putAll(blobsByDigest);
+    }
+
+    @InterfaceAudience.Private
+    public void rememberPendingKey(BlobKey key, String digest) {
+        getPendingAttachmentsByDigest().put(digest, key.getBytes());
     }
 
     /**
@@ -1535,29 +1583,17 @@ public final class Database implements StoreDelegate {
 
     @InterfaceAudience.Private
     public RevisionInternal putRevision(RevisionInternal rev, String prevRevId, boolean allowConflict) throws CouchbaseLiteException {
-        Status ignoredStatus = new Status();
+        Status ignoredStatus = new Status(Status.OK);
         return putRevision(rev, prevRevId, allowConflict, ignoredStatus);
     }
 
-    /**
-     * Stores a new (or initial) revision of a document.
-     * This is what's invoked by a PUT or POST. As with those, the previous revision ID must be supplied when necessary and the call will fail if it doesn't match.
-     *
-     * @param oldRev        The revision to add. If the docID is null, a new UUID will be assigned. Its revID must be null. It must have a JSON body.
-     * @param prevRevId     The ID of the revision to replace (same as the "?rev=" parameter to a PUT), or null if this is a new document.
-     * @param allowConflict If false, an error status 409 will be returned if the insertion would create a conflict, i.e. if the previous revision already has a child.
-     * @param resultStatus  On return, an HTTP status code indicating success or failure.
-     * @return A new RevisionInternal with the docID, revID and sequence filled in (but no body).
-     * <p/>
-     * NOTE: Called by Internal and Unit Tests
-     */
     @InterfaceAudience.Private
     public RevisionInternal putRevision(RevisionInternal putRev,
                                         String inPrevRevID,
                                         boolean allowConflict,
                                         Status outStatus)
             throws CouchbaseLiteException {
-        return put(putRev.getDocId(), putRev.getProperties(), inPrevRevID, allowConflict, null, outStatus);
+        return put(putRev.getDocID(), putRev.getProperties(), inPrevRevID, allowConflict, null, outStatus);
     }
 
     public RevisionInternal put(String docID,
@@ -1565,14 +1601,16 @@ public final class Database implements StoreDelegate {
                                 String prevRevID,
                                 boolean allowConflict,
                                 URL source,
-                                Status outStatus){
+                                Status outStatus) {
 
         boolean deleting = properties == null ||
                 (properties.containsKey("_deleted") &&
-                        ((Boolean)properties.get("_deleted")).booleanValue());
+                        ((Boolean) properties.get("_deleted")).booleanValue());
 
         // Attachments
         if (properties != null && properties.containsKey("_attachments")) {
+            // Add any new attachment data to the blob-store, and turn all of them into stubs:
+            //FIX: Optimize this to avoid creating a revision object
             RevisionInternal tmpRev = new RevisionInternal(docID, prevRevID, deleting);
             tmpRev.setProperties(properties);
             List<String> ancestry = new ArrayList<String>();
@@ -1586,12 +1624,12 @@ public final class Database implements StoreDelegate {
 
         // TODO: Need to implement Shared (Manager.shared)
         StorageValidation validationBlock = null;
-        if(validations != null && validations.size() > 0) {
+        if (validations != null && validations.size() > 0) {
             validationBlock = new StorageValidation() {
                 @Override
                 public Status validate(RevisionInternal newRev, RevisionInternal prevRev, String parentRevID) {
                     try {
-                        validateRevision(newRev, prevRev,parentRevID);
+                        validateRevision(newRev, prevRev, parentRevID);
                     } catch (CouchbaseLiteException e) {
                         return new Status(Status.FORBIDDEN);
                     }
@@ -1612,9 +1650,10 @@ public final class Database implements StoreDelegate {
                     outStatus);
         } catch (CouchbaseLiteException e) {
             Log.e(TAG, "%d", e.getCBLStatus());
+            outStatus.setCode(e.getCBLStatus().getCode());
         }
 
-        if(putRev!=null)
+        if (putRev != null)
             Log.v(TAG, "--> created %s", putRev);
 
         return putRev;
@@ -1859,7 +1898,7 @@ public final class Database implements StoreDelegate {
      * in CBLDatabase+Internal.m
      * - (void) forgetViewNamed: (NSString*)name
      */
-    protected void forgetView(String name){
+    protected void forgetView(String name) {
         views.remove(name);
     }
 
@@ -1937,102 +1976,87 @@ public final class Database implements StoreDelegate {
     protected List<View> getAllViews() {
         //return store == null ? null : store.getAllViews();
         List<String> names = store == null ? null : store.getAllViewNames();
-        if(names == null)
+        if (names == null)
             return null;
         List<View> views = new ArrayList<View>();
-        for(String name : names){
+        for (String name : names) {
             views.add(this.getExistingView(name));
         }
         return views;
     }
-/*
-    protected Status deleteViewNamed(String name) {
-        return store == null ? null : store.deleteViewNamed(name);
-    }
-*/
+
     /**
-     * Returns the rev ID of the 'winning' revision of this document, and whether it's deleted.
-     * <p/>
-     * in CBLDatabase+Internal.m
-     * - (NSString*) winningRevIDOfDocNumericID: (SInt64)docNumericID
-     * isDeleted: (BOOL*)outIsDeleted
-     * isConflict: (BOOL*)outIsConflict // optional
-     * status: (CBLStatus*)outStatus
-     * NOTE: Called only from internal and Unit Tests
+     * Given a decoded attachment with a "follows" property, find the associated CBL_BlobStoreWriter
+     * and install it into the blob-store.
+     * - (CBLStatus) installAttachment: (CBL_Attachment*)attachment
      */
-    /*
-    protected String winningRevIDOfDoc(long docNumericId, AtomicBoolean outIsDeleted, AtomicBoolean outIsConflict) throws CouchbaseLiteException {
-        return store.winningRevIDOfDocNumericID(docNumericId, outIsDeleted, outIsConflict);
-    }
-    */
-
-    // Database+Attachments
-
-    private void insertAttachmentForSequence(AttachmentInternal attachment, long sequence) throws CouchbaseLiteException {
-        if (store != null)
-            store.insertAttachmentForSequenceWithNameAndType(
-                    sequence,
-                    attachment.getName(),
-                    attachment.getContentType(),
-                    attachment.getRevpos(),
-                    attachment.getBlobKey(),
-                    attachment.getLength(),
-                    attachment.getEncoding(),
-                    attachment.getEncodedLength());
-    }
-
-    private void insertAttachmentForSequenceWithNameAndType(long sequence, String name, String contentType, int revpos, BlobKey key) throws CouchbaseLiteException {
-        if (store != null)
-            store.insertAttachmentForSequenceWithNameAndType(sequence, name, contentType, revpos, key, key != null ? attachments.getSizeOfBlob(key) : -1, AttachmentInternal.AttachmentEncoding.AttachmentEncodingNone, -1);
-    }
-
-    private void installAttachment(AttachmentInternal attachment, Map<String, Object> attachInfo) throws CouchbaseLiteException {
-        String digest = (String) attachInfo.get("digest");
-        if (digest == null) {
+    private void installAttachment(AttachmentInternal attachment) throws CouchbaseLiteException {
+        String digest = attachment.getDigest();
+        if (digest == null)
             throw new CouchbaseLiteException(Status.BAD_ATTACHMENT);
-        }
 
+        Object writer = null;
         if (pendingAttachmentsByDigest != null && pendingAttachmentsByDigest.containsKey(digest)) {
-            BlobStoreWriter writer = pendingAttachmentsByDigest.get(digest);
-            try {
-                BlobStoreWriter blobStoreWriter = (BlobStoreWriter) writer;
-                blobStoreWriter.install();
-                attachment.setBlobKey(blobStoreWriter.getBlobKey());
-                attachment.setLength(blobStoreWriter.getLength());
-            } catch (Exception e) {
-                throw new CouchbaseLiteException(e, Status.STATUS_ATTACHMENT_ERROR);
-            }
+            writer = pendingAttachmentsByDigest.get(digest);
+        }
+
+        if(writer != null && writer instanceof BlobStoreWriter) {
+            // Found a blob writer, so install the blob:
+            BlobStoreWriter blobStoreWriter = (BlobStoreWriter) writer;
+            if (!blobStoreWriter.install())
+                throw new CouchbaseLiteException(Status.ATTACHMENT_ERROR);
+            attachment.setBlobKey(blobStoreWriter.getBlobKey());
+            attachment.setPossiblyEncodedLength(blobStoreWriter.getLength());
+            // Remove the writer but leave the blob-key behind for future use:
+            rememberPendingKey(attachment.getBlobKey(), digest);
+            return;
+        } else if(writer != null && writer instanceof byte[]){
+            // This attachment was already added, but the key was left behind in the dictionary:
+            attachment.setBlobKey(new BlobKey((byte[])writer));
+        } else if (attachments.hasBlobForKey(attachment.getBlobKey())) {
+            // It already exists in the blob-store, so it's OK
+            return;
         } else {
-            Log.w(Database.TAG, "No pending attachment for digest: " + digest);
+            Log.w(Database.TAG, "No pending attachment for getDigest: " + digest);
             throw new CouchbaseLiteException(Status.BAD_ATTACHMENT);
         }
     }
 
-    private Map<String, BlobStoreWriter> getPendingAttachmentsByDigest() {
+    // #pragma mark - LOOKING UP ATTACHMENTS:
+
+    /**
+     * - (NSDictionary*) attachmentsForDocID: (NSString*)docID
+     *                                 revID: (NSString*)revID
+     *                                status: (CBLStatus*)outStatus
+     */
+    protected Map<String, Object> getAttachments(String docID, String revID) {
+        RevisionInternal mrev = new RevisionInternal(docID, revID, false);
+        try {
+            RevisionInternal rev = loadRevisionBody(mrev, EnumSet.noneOf(TDContentOptions.class));
+            return rev.getAttachments();
+        } catch (CouchbaseLiteException e) {
+            Log.w(Log.TAG_DATABASE, "Failed to get attachments for " + mrev, e);
+            return null;
+        }
+    }
+
+    protected AttachmentInternal getAttachment(RevisionInternal rev, String filename)
+            throws CouchbaseLiteException {
+        assert (filename != null);
+        Map<String, Object> attachments = rev.getAttachments();
+        if (attachments == null) {
+            attachments = getAttachments(rev.getDocID(), rev.getRevID());
+            if (attachments == null)
+                return null;
+        }
+        return getAttachment((Map<String, Object>) attachments.get(filename), filename);
+    }
+
+
+    private Map<String, Object> getPendingAttachmentsByDigest() {
         if (pendingAttachmentsByDigest == null)
-            pendingAttachmentsByDigest = new HashMap<String, BlobStoreWriter>();
+            pendingAttachmentsByDigest = new HashMap<String, Object>();
         return pendingAttachmentsByDigest;
-    }
-
-    protected void copyAttachmentNamedFromSequenceToSequence(String name, long fromSeq, long toSeq) throws CouchbaseLiteException {
-        if (store != null)
-            store.copyAttachmentNamedFromSequenceToSequence(name, fromSeq, toSeq);
-    }
-
-    /**
-     * Returns the location of an attachment's file in the blob store.
-     * NOTE: Used by only from Attachment
-     */
-    protected String getAttachmentPathForSequence(long sequence, String filename) throws CouchbaseLiteException {
-        return store == null ? null : store.getAttachmentPathForSequence(sequence, filename);
-    }
-
-    /**
-     * Constructs an "_attachments" dictionary for a revision, to be inserted in its JSON body.
-     * TODO: do we need this in Database.java???
-     */
-    protected Map<String, Object> getAttachmentsDictForSequenceWithContent(long sequence, EnumSet<TDContentOptions> contentOptions) {
-        return store == null ? null : store.getAttachmentsDictForSequenceWithContent(sequence, contentOptions);
     }
 
     protected void rememberAttachmentWriter(BlobStoreWriter writer) {
@@ -2083,17 +2107,6 @@ public final class Database implements StoreDelegate {
             }
         }
         return posted;
-    }
-
-    protected Map<String, Object> getAttachments(String docID, String revID) {
-        RevisionInternal mrev = new RevisionInternal(docID, revID, false);
-        try {
-            RevisionInternal rev = loadRevisionBody(mrev, EnumSet.noneOf(TDContentOptions.class));
-            return rev.getAttachments();
-        } catch (CouchbaseLiteException e) {
-            Log.w(Log.TAG_DATABASE, "Failed to get attachments for " + mrev, e);
-            return null;
-        }
     }
 
     // Database+Replication
@@ -2158,5 +2171,15 @@ public final class Database implements StoreDelegate {
 
     private Document cachedDocumentWithID(String documentId) {
         return docCache.resourceWithCacheKeyDontRecache(documentId);
+    }
+
+    private boolean garbageCollectAttachments() throws CouchbaseLiteException {
+        Log.v(TAG, "Scanning database revisions for attachments...");
+        Set<BlobKey> keys = store.findAllAttachmentKeys();
+        List<BlobKey> keysToKeep = new ArrayList<BlobKey>(keys);
+        Log.v(TAG, "    ...found %d attachments", keys.size());
+        int deleted = attachments.deleteBlobsExceptWithKeys(keysToKeep);
+        Log.v(TAG, "    ... deleted %d obsolete attachment files.", deleted);
+        return deleted >= 0;
     }
 }
