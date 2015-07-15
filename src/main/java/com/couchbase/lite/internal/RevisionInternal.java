@@ -325,4 +325,12 @@ public class RevisionInternal {
         }
         return null;
     }
+
+    /**
+     * in CBL_Revision.m
+     * - (id)objectForKeyedSubscript:(id)key
+     */
+    public Object getObject(String key){
+        return body!=null?body.getObject(key):null;
+    }
 }

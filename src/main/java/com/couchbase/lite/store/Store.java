@@ -275,13 +275,6 @@ public interface Store {
                          StorageValidation validationBlock,
                          Status outStatus)
             throws CouchbaseLiteException;
-    /*
-    RevisionInternal putRevision(RevisionInternal oldRev,
-                                 String prevRevId,
-                                 boolean allowConflict,
-                                 Status resultStatus)
-            throws CouchbaseLiteException;
-    */
 
     /**
      * Inserts an already-existing revision (with its revID), plus its ancestry, into a document.
@@ -299,16 +292,11 @@ public interface Store {
      *                        (This will be used to create the CBLDatabaseChange object sent to the delegate.)
      * @throws CouchbaseLiteException
      */
-    /*
     void forceInsert(RevisionInternal inRev,
                      List<String> history,
                      StorageValidation validationBlock,
                      URL source)
             throws CouchbaseLiteException;
-    */
-    void forceInsert(RevisionInternal inRev, List<String> history, URL source)
-            throws CouchbaseLiteException;
-
 
     /**
      * Purges specific revisions, which deletes them completely from the local database

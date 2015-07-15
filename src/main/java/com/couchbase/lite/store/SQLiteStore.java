@@ -10,7 +10,6 @@ import com.couchbase.lite.BlobKey;
 import com.couchbase.lite.ChangesOptions;
 import com.couchbase.lite.CouchbaseLiteException;
 import com.couchbase.lite.Database;
-import com.couchbase.lite.Document;
 import com.couchbase.lite.DocumentChange;
 import com.couchbase.lite.Manager;
 import com.couchbase.lite.Misc;
@@ -23,7 +22,6 @@ import com.couchbase.lite.RevisionList;
 import com.couchbase.lite.Status;
 import com.couchbase.lite.TransactionalTask;
 import com.couchbase.lite.View;
-import com.couchbase.lite.internal.AttachmentInternal;
 import com.couchbase.lite.internal.InterfaceAudience;
 import com.couchbase.lite.internal.RevisionInternal;
 import com.couchbase.lite.storage.ContentValues;
@@ -441,13 +439,10 @@ public class SQLiteStore implements Store {
             }
             if (revID != null) {
                 sql = "SELECT " + cols + " FROM revs WHERE revs.doc_id=? AND revid=? AND json notnull LIMIT 1";
-                //TODO: mismatch w iOS: {sql = "SELECT " + cols + " FROM revs WHERE revs.doc_id=? AND revid=? AND json notnull LIMIT 1";}
                 String[] args = {Long.toString(docNumericID), revID};
                 cursor = storageEngine.rawQuery(sql, args);
             } else {
                 sql = "SELECT " + cols + " FROM revs WHERE revs.doc_id=? and current=1 and deleted=0 ORDER BY revid DESC LIMIT 1";
-                //sql = "SELECT " + cols + " FROM revs WHERE revs.doc_id=? and current=1 ORDER BY revid DESC LIMIT 1";
-                //TODO: mismatch w iOS: {sql = "SELECT " + cols + " FROM revs WHERE revs.doc_id=? and current=1 and deleted=0 ORDER BY revid DESC LIMIT 1";}
                 String[] args = {Long.toString(docNumericID)};
                 cursor = storageEngine.rawQuery(sql, args);
             }
@@ -465,6 +460,9 @@ public class SQLiteStore implements Store {
                     byte[] json = cursor.getBlob(3);
                     result.setJSON(json);
                 }
+            }
+            else{
+                // revID != null?Status.NOT_FOUND:Status.DELTED
             }
         } catch (SQLException e) {
             Log.e(TAG, "Error getting document with id and rev", e);
@@ -627,22 +625,16 @@ public class SQLiteStore implements Store {
 
     @Override
     public RevisionList getAllRevisions(String docId, long docNumericID, boolean onlyCurrent) {
-
         String sql = null;
-        if (onlyCurrent) {
+        if (onlyCurrent)
             sql = "SELECT sequence, revid, deleted FROM revs " +
                     "WHERE doc_id=? AND current ORDER BY sequence DESC";
-        } else {
+        else
             sql = "SELECT sequence, revid, deleted FROM revs " +
                     "WHERE doc_id=? ORDER BY sequence DESC";
-        }
-
         String[] args = {Long.toString(docNumericID)};
-        Cursor cursor = null;
-
-        cursor = storageEngine.rawQuery(sql, args);
-
-        RevisionList result;
+        Cursor cursor = storageEngine.rawQuery(sql, args);
+        RevisionList result = null;
         try {
             cursor.moveToNext();
             result = new RevisionList();
@@ -655,14 +647,11 @@ public class SQLiteStore implements Store {
                 cursor.moveToNext();
             }
         } catch (SQLException e) {
-            Log.e(TAG, "Error getting all revisions of document", e);
             return null;
         } finally {
-            if (cursor != null) {
+            if (cursor != null)
                 cursor.close();
-            }
         }
-
         return result;
     }
 
@@ -1124,9 +1113,9 @@ public class SQLiteStore implements Store {
             long docNumericID = -1;
             if (docID != null) {
                 docNumericID = createOrGetDocNumericID(docID, isNewDoc);
-                if (docNumericID <= 0) {
+                if (docNumericID <= 0)
                     // TODO: error
-                }
+                    throw new CouchbaseLiteException(Status.UNKNOWN);
             } else {
                 docNumericID = 0;
                 isNewDoc.set(true);
@@ -1148,7 +1137,7 @@ public class SQLiteStore implements Store {
                     throw new CouchbaseLiteException(Status.NOT_FOUND);
 
                 parentSequence = getSequenceOfDocument(docNumericID, prevRevID, !allowConflict);
-                if (parentSequence == 0) {
+                if (parentSequence <= 0) { // -1 if not found
                     // Not found: either a 404 or a 409, depending on whether there is any current revision
                     if (!allowConflict && existsDocument(docID, null)) {
                         throw new CouchbaseLiteException(Status.CONFLICT);
@@ -1307,133 +1296,116 @@ public class SQLiteStore implements Store {
      */
     @Override
     @InterfaceAudience.Private
-    public void forceInsert(RevisionInternal inRev, List<String> history, URL source) throws CouchbaseLiteException {
+    public void forceInsert(RevisionInternal inRev,
+                            List<String> history,
+                            StorageValidation validationBlock,
+                            URL source)
+            throws CouchbaseLiteException {
 
-        // TODO: in the iOS version, it is passed an immutable RevisionInternal and then
-        // TODO: creates a mutable copy.  We should do the same here.
-        // TODO: see github.com/couchbase/couchbase-lite-java-core/issues/206#issuecomment-44364624
+        Status status = new Status(Status.UNKNOWN);
+
+        RevisionInternal rev = inRev.copy();
+        rev.setSequence(0);
+        String docID = rev.getDocID();
 
         String winningRevID = null;
-        boolean inConflict = false;
-
-        String docId = inRev.getDocID();
-        String revId = inRev.getRevID();
-        if (!Document.isValidDocumentId(docId) || (revId == null)) {
-            throw new CouchbaseLiteException(Status.BAD_REQUEST);
-        }
-
-        int historyCount = 0;
-        if (history != null) {
-            historyCount = history.size();
-        }
-        if (historyCount == 0) {
-            history = new ArrayList<String>();
-            history.add(revId);
-            historyCount = 1;
-        } else if (!history.get(0).equals(inRev.getRevID())) {
-            throw new CouchbaseLiteException(Status.BAD_REQUEST);
-        }
-
+        AtomicBoolean inConflict = new AtomicBoolean(false);
         boolean success = false;
+
         beginTransaction();
         try {
             // First look up the document's row-id and all locally-known revisions of it:
             Map<String, RevisionInternal> localRevs = null;
-            boolean isNewDoc = (historyCount == 1);
-            AtomicBoolean tmp = new AtomicBoolean(isNewDoc);
-            long docNumericID = createDocNumericID(docId, tmp);
-
-            if (!isNewDoc) {
-                RevisionList localRevsList = getAllRevisions(docId, docNumericID, false);
-                if (localRevsList == null) {
+            String oldWinningRevID = null;
+            AtomicBoolean oldWinnerWasDeletion = new AtomicBoolean(false);
+            AtomicBoolean isNewDoc = new AtomicBoolean(history.size() == 1);
+            long docNumericID = createOrGetDocNumericID(docID, isNewDoc);
+            if(docNumericID <= 0)
+                throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
+            if (!isNewDoc.get()) {
+                RevisionList localRevsList = getAllRevisions(docID, docNumericID, false);
+                if (localRevsList == null)
                     throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
-                }
                 localRevs = new HashMap<String, RevisionInternal>();
-                for (RevisionInternal r : localRevsList) {
+                for (RevisionInternal r : localRevsList)
                     localRevs.put(r.getRevID(), r);
-                }
+
+                // Look up which rev is the winner, before this insertion
+                oldWinningRevID = winningRevIDOfDocNumericID(
+                        docNumericID,
+                        oldWinnerWasDeletion,
+                        inConflict);
             }
 
             // Validate against the latest common ancestor:
-            if (delegate.getValidations() != null && delegate.getValidations().size() > 0) {
+            if(validationBlock != null){
                 RevisionInternal oldRev = null;
-                for (int i = 1; i < historyCount; i++) {
+                for (int i = 1; i < history.size(); i++) {
                     oldRev = (localRevs != null) ? localRevs.get(history.get(i)) : null;
                     if (oldRev != null) {
                         break;
                     }
                 }
-                String parentRevId = (historyCount > 1) ? history.get(1) : null;
-                delegate.validateRevision(inRev, oldRev, parentRevId);
-            }
-
-            AtomicBoolean outIsDeleted = new AtomicBoolean(false);
-            AtomicBoolean outIsConflict = new AtomicBoolean(false);
-            boolean oldWinnerWasDeletion = false;
-            String oldWinningRevID = winningRevIDOfDocNumericID(docNumericID, outIsDeleted, outIsConflict);
-            if (outIsDeleted.get()) {
-                oldWinnerWasDeletion = true;
-            }
-            if (outIsConflict.get()) {
-                inConflict = true;
+                String parentRevId = (history.size() > 1) ? history.get(1) : null;
+                Status tmpStatus = validationBlock.validate(rev, oldRev, parentRevId);
+                if(tmpStatus.isError()) {
+                    throw new CouchbaseLiteException(tmpStatus);
+                }
             }
 
             // Walk through the remote history in chronological order, matching each revision ID to
-            // a local revision. When the list diverges, start creating blank local revisions to fill
-            // in the local history:
+            // a local revision. When the list diverges, start creating blank local revisions to
+            // fill in the local history:
             long sequence = 0;
             long localParentSequence = 0;
             for (int i = history.size() - 1; i >= 0; --i) {
-                revId = history.get(i);
-                RevisionInternal localRev = (localRevs != null) ? localRevs.get(revId) : null;
+                String revID = history.get(i);
+                RevisionInternal localRev = (localRevs != null) ? localRevs.get(revID) : null;
                 if (localRev != null) {
-                    // This revision is known locally. Remember its sequence as the parent of the next one:
+                    // This revision is known locally. Remember its sequence as the parent of
+                    // the next one:
                     sequence = localRev.getSequence();
                     assert (sequence > 0);
                     localParentSequence = sequence;
                 } else {
                     // This revision isn't known, so add it:
-
-                    RevisionInternal newRev;
-                    byte[] data = null;
+                    RevisionInternal newRev = null;
+                    byte[] json = null;
+                    String docType = null;
                     boolean current = false;
                     if (i == 0) {
                         // Hey, this is the leaf revision we're inserting:
-                        newRev = inRev;
-                        if (!inRev.isDeleted()) {
-                            data = RevisionUtils.asCanonicalJSON(inRev);
-                            if (data == null) {
-                                throw new CouchbaseLiteException(Status.BAD_REQUEST);
-                            }
-                        }
+                        newRev = rev;
+                        json = RevisionUtils.asCanonicalJSON(inRev);
+                        if (json == null)
+                            throw new CouchbaseLiteException(Status.BAD_JSON);
+                        docType = (String)rev.getObject("type");
                         current = true;
                     } else {
                         // It's an intermediate parent, so insert a stub:
-                        newRev = new RevisionInternal(docId, revId, false);
+                        newRev = new RevisionInternal(docID, revID, false);
                     }
 
                     // Insert it:
-                    sequence = insertRevision(newRev, docNumericID, sequence, current, (newRev.getAttachments() != null && newRev.getAttachments().size() > 0), data, null);
-
-                    if (sequence <= 0) {
+                    sequence = insertRevision(
+                            newRev,
+                            docNumericID,
+                            sequence,
+                            current,
+                            (newRev.getAttachments() != null && newRev.getAttachments().size() > 0),
+                            json,
+                            docType);
+                    if (sequence <= 0)
                         throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
-                    }
-
-                    if (i == 0) {
-                        // Write any changed attachments for the new revision. As the parent sequence use
-                        // the latest local revision (this is to copy attachments from):
-                        String prevRevID = (history.size() >= 2) ? history.get(1) : null;
-                        Map<String, AttachmentInternal> attachments = delegate.getAttachmentsFromRevision(inRev, prevRevID);
-                        if (attachments != null) {
-                            //delegate.processAttachmentsForRevision(attachments, inRev, localParentSequence);
-                            //delegate.stubOutAttachmentsInRevision(attachments, inRev);
-                        }
-                    }
                 }
             }
 
+            if(localParentSequence == sequence){
+                success = true; // No-op: No new revisions were inserted.
+                status.setCode(Status.OK);
+            }
             // Mark the latest local rev as no longer current:
-            if (localParentSequence > 0 && localParentSequence != sequence) {
+            else if (localParentSequence > 0 ) {
                 ContentValues args = new ContentValues();
                 args.put("current", 0);
                 args.put("doc_type", (String) null);
@@ -1441,27 +1413,29 @@ public class SQLiteStore implements Store {
                 int numRowsChanged = 0;
                 try {
                     numRowsChanged = storageEngine.update("revs", args, "sequence=? AND current!=0", whereArgs);
-                    if (numRowsChanged == 0) {
-                        inConflict = true;  // local parent wasn't a leaf, ergo we just created a branch
-                    }
+                    if (numRowsChanged == 0)
+                        inConflict.set(true);  // local parent wasn't a leaf, ergo we just created a branch
                 } catch (SQLException e) {
                     throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
                 }
             }
 
-            winningRevID = winner(docNumericID, oldWinningRevID, oldWinnerWasDeletion, inRev);
-
-            success = true;
-
-            // Notify and return:
-            if (delegate != null)
-                delegate.databaseStorageChanged(new DocumentChange(inRev, winningRevID, inConflict, source));
-
+            if(!success) {
+                // Figure out what the new winning rev ID is:
+                winningRevID = winner(docNumericID, oldWinningRevID, oldWinnerWasDeletion.get(), rev);
+                success = true;
+                status.setCode(Status.CREATED);
+            }
         } catch (SQLException e) {
             throw new CouchbaseLiteException(Status.INTERNAL_SERVER_ERROR);
         } finally {
             endTransaction(success);
         }
+        // Notify and return:
+        if (status.getCode() == Status.CREATED)
+            delegate.databaseStorageChanged(new DocumentChange(rev, winningRevID, inConflict.get(), source));
+        else if(status.isError())
+            throw new CouchbaseLiteException(status);
     }
 
     /**
@@ -2119,34 +2093,6 @@ public class SQLiteStore implements Store {
         return 0;
     }
 
-    /**
-     * Splices the contents of an NSDictionary into JSON data (that already represents a dict), without parsing the JSON.
-     */
-    private byte[] appendDictToJSON(byte[] json, Map<String, Object> dict) {
-        if (dict.size() == 0) {
-            return json;
-        }
-
-        byte[] extraJSON = null;
-        try {
-            extraJSON = Manager.getObjectMapper().writeValueAsBytes(dict);
-        } catch (Exception e) {
-            Log.e(TAG, "Error convert extra JSON to bytes", e);
-            return null;
-        }
-
-        int jsonLength = json.length;
-        int extraLength = extraJSON.length;
-        if (jsonLength == 2) { // Original JSON was empty
-            return extraJSON;
-        }
-        byte[] newJson = new byte[jsonLength + extraLength - 1];
-        System.arraycopy(json, 0, newJson, 0, jsonLength - 1);  // Copy json w/o trailing '}'
-        newJson[jsonLength - 1] = ',';  // Add a ','
-        System.arraycopy(extraJSON, 1, newJson, jsonLength, extraLength - 1);
-        return newJson;
-    }
-
     private boolean sequenceHasAttachments(long sequence) {
         String args[] = {Long.toString(sequence)};
         return SQLiteUtils.booleanForQuery(storageEngine, "SELECT no_attachments=0 FROM revs WHERE sequence=?", args);
@@ -2181,7 +2127,7 @@ public class SQLiteStore implements Store {
     //private long getOrInsertDocNumericID(String docID) {
     private long createDocNumericID(String docID, AtomicBoolean isNew) {
         long docNumericId = getDocNumericID(docID);
-        if (docNumericId == -1) {
+        if (docNumericId == 0) {
             docNumericId = insertDocumentID(docID);
             isNew.set(true);
         }
@@ -2203,6 +2149,7 @@ public class SQLiteStore implements Store {
         return rowId;
     }
 
+    // Raw row insertion. Returns new sequence, or 0 on error
     private long insertRevision(RevisionInternal rev,
                                 long docNumericID,
                                 long parentSequence,

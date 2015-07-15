@@ -36,13 +36,14 @@ public final class SavedRevision extends Revision {
 
     private RevisionInternal revisionInternal;
     private boolean checkedProperties;
+    String parentRevID;
 
     /**
      * Constructor
      * @exclude
      */
     @InterfaceAudience.Private
-    /* package */ SavedRevision(Document document, RevisionInternal revision) {
+    protected SavedRevision(Document document, RevisionInternal revision) {
         super(document);
         this.revisionInternal = revision;
     }
@@ -52,9 +53,22 @@ public final class SavedRevision extends Revision {
      * @exclude
      */
     @InterfaceAudience.Private
-    /* package */ SavedRevision(Database database, RevisionInternal revision) {
+    protected SavedRevision(Database database, RevisionInternal revision) {
         this(database.getDocument(revision.getDocID()), revision);
     }
+    /**
+     * Constructor
+     * - (instancetype) initForValidationWithDatabase: (CBLDatabase*)db
+     *                                       revision: (CBL_Revision*)rev
+     *                               parentRevisionID: (NSString*)parentRevID
+     */
+    @InterfaceAudience.Private
+    protected SavedRevision(Database database, RevisionInternal revision, String parentRevID) {
+        this(database.getDocument(revision.getDocID()), revision);
+        this.parentRevID = parentRevID;
+        this.checkedProperties = true;
+    }
+
 
     /**
      * Get the document this is a revision of
@@ -133,13 +147,15 @@ public final class SavedRevision extends Revision {
     @InterfaceAudience.Public
     public Map<String,Object> getProperties() {
         Map<String, Object> properties = revisionInternal.getProperties();
-        if (properties == null && !checkedProperties) {
-            if (loadProperties() == true) {
-                properties = revisionInternal.getProperties();
+        if(!checkedProperties) {
+            if (properties == null) {
+                if (loadProperties() == true) {
+                    properties = revisionInternal.getProperties();
+                }
             }
             checkedProperties = true;
         }
-        return Collections.unmodifiableMap(properties);
+        return properties!=null?Collections.unmodifiableMap(properties):null;
     }
 
     /**
@@ -190,7 +206,7 @@ public final class SavedRevision extends Revision {
      * @exclude
      */
     @InterfaceAudience.Private
-    /* package */ boolean loadProperties() {
+    protected boolean loadProperties() {
         try {
             RevisionInternal loadRevision = getDatabase().loadRevisionBody(revisionInternal, EnumSet.noneOf(Database.TDContentOptions.class));
             if (loadRevision == null) {

@@ -168,4 +168,8 @@ public class Body {
         this.object = null;
         this.json = null;
     }
+
+    public Object getObject(String key){
+        return getProperties()!=null?getProperties().get(key):null;
+    }
 }

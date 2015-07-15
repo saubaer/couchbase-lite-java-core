@@ -29,7 +29,7 @@ public class SQLiteUtils {
 
     public static long longForQuery(SQLiteStorageEngine storageEngine, String query, String[] args) throws SQLException {
         Cursor cursor = null;
-        long result = -1;
+        long result = 0;
         try {
             cursor = storageEngine.rawQuery(query, args);
             if (cursor.moveToNext()) {
@@ -45,7 +45,7 @@ public class SQLiteUtils {
 
     public static int intForQuery(SQLiteStorageEngine storageEngine, String query, String[] args) throws SQLException {
         Cursor cursor = null;
-        int result = -1;
+        int result = 0;
         try {
             cursor = storageEngine.rawQuery(query, args);
             if (cursor.moveToNext()) {

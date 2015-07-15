@@ -9,8 +9,6 @@ package com.couchbase.lite.store;
 import com.couchbase.lite.CouchbaseLiteException;
 import com.couchbase.lite.DocumentChange;
 import com.couchbase.lite.ReplicationFilter;
-import com.couchbase.lite.Validator;
-import com.couchbase.lite.internal.AttachmentInternal;
 import com.couchbase.lite.internal.RevisionInternal;
 
 import java.util.Map;
@@ -41,7 +39,6 @@ public interface StoreDelegate {
     String generateRevID(byte[] json, boolean deleted, String prevRevID);
 
     // TODO: Temporary!!!
-    Map<String, Validator> getValidations();
 
     void validateRevision(RevisionInternal newRev,
                           RevisionInternal oldRev,
@@ -51,8 +48,4 @@ public interface StoreDelegate {
     boolean runFilter(ReplicationFilter filter,
                       Map<String, Object> filterParams,
                       RevisionInternal rev);
-
-    Map<String, AttachmentInternal> getAttachmentsFromRevision(RevisionInternal rev,
-                                                               String prevRevID)
-            throws CouchbaseLiteException;
 }

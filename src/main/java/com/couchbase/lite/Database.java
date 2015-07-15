@@ -721,17 +721,12 @@ public final class Database implements StoreDelegate {
     }
 
     @InterfaceAudience.Private
-    public Map<String, Validator> getValidations() {
-        return validations;
-    }
-
-    @InterfaceAudience.Private
     public void validateRevision(RevisionInternal newRev, RevisionInternal oldRev, String parentRevID) throws CouchbaseLiteException {
         if (validations == null || validations.size() == 0) {
             return;
         }
 
-        SavedRevision publicRev = new SavedRevision(this, newRev);
+        SavedRevision publicRev = new SavedRevision(this, newRev, parentRevID);
         publicRev.setParentRevisionID(parentRevID);
 
         ValidationContextImpl context = new ValidationContextImpl(this, oldRev, newRev);
@@ -743,101 +738,6 @@ public final class Database implements StoreDelegate {
                 throw new CouchbaseLiteException(context.getRejectMessage(), Status.FORBIDDEN);
             }
         }
-    }
-
-    /**
-     * Given a revision, read its _attachments dictionary (if any), convert each attachment to a
-     * AttachmentInternal object, and return a dictionary mapping names->CBL_Attachments.
-     */
-    @InterfaceAudience.Private
-    public Map<String, AttachmentInternal> getAttachmentsFromRevision(RevisionInternal rev, String prevRevID)
-            throws CouchbaseLiteException {
-
-        Map<String, Object> revAttachments = (Map<String, Object>) rev.getPropertyForKey("_attachments");
-        if (revAttachments == null || revAttachments.size() == 0 || rev.isDeleted()) {
-            return new HashMap<String, AttachmentInternal>();
-        }
-
-        Map<String, AttachmentInternal> attachments = new HashMap<String, AttachmentInternal>();
-        for (String name : revAttachments.keySet()) {
-            Map<String, Object> attachInfo = (Map<String, Object>) revAttachments.get(name);
-            String contentType = (String) attachInfo.get("content_type");
-            AttachmentInternal attachment = new AttachmentInternal(name, contentType);
-            String newContentBase64 = (String) attachInfo.get("data");
-            if (newContentBase64 != null) {
-                // If there's inline attachment data, decode and store it:
-                byte[] newContents;
-                try {
-                    newContents = Base64.decode(newContentBase64, Base64.DONT_GUNZIP);
-                } catch (IOException e) {
-                    throw new CouchbaseLiteException(e, Status.BAD_ENCODING);
-                }
-                attachment.setLength(newContents.length);
-                BlobKey outBlobKey = new BlobKey();
-                boolean storedBlob = getAttachmentStore().storeBlob(newContents, outBlobKey);
-                attachment.setBlobKey(outBlobKey);
-                if (!storedBlob) {
-                    throw new CouchbaseLiteException(Status.ATTACHMENT_ERROR);
-                }
-            } else if (attachInfo.containsKey("follows") && ((Boolean) attachInfo.get("follows")).booleanValue()) {
-                // "follows" means the uploader provided the attachment in a separate MIME part.
-                // This means it's already been registered in _pendingAttachmentsByDigest;
-                // I just need to look it up by its "digest" property and install it into the store:
-                installAttachment(attachment);
-            } else if (attachInfo.containsKey("stub") && ((Boolean) attachInfo.get("stub")).booleanValue()) {
-                // "stub" on an incoming revision means the attachment is the same as in the parent.
-                int revPos = ((Integer) attachInfo.get("revpos")).intValue();
-                if (revPos <= 0) {
-                    throw new CouchbaseLiteException("Invalid revpos: " + revPos, Status.BAD_ATTACHMENT);
-                }
-                Map<String, Object> parentAttachments = getAttachments(rev.getDocID(), prevRevID);
-                if (parentAttachments != null && parentAttachments.containsKey(name)) {
-                    Map<String, Object> parentAttachment = (Map<String, Object>) parentAttachments.get(name);
-                    try {
-                        BlobKey blobKey = new BlobKey((String) attachInfo.get("digest"));
-                        attachment.setBlobKey(blobKey);
-                    } catch (IllegalArgumentException e) {
-                        continue;
-                    }
-                } else if (parentAttachments == null || !parentAttachments.containsKey(name)) {
-                    BlobKey blobKey = null;
-                    try {
-                        blobKey = new BlobKey((String) attachInfo.get("digest"));
-                    } catch (IllegalArgumentException e) {
-                        continue;
-                    }
-                    if (getAttachmentStore().hasBlobForKey(blobKey)) {
-                        attachment.setBlobKey(blobKey);
-                    } else {
-                        continue;
-                    }
-                } else {
-                    continue;
-                }
-            }
-
-            // Handle encoded attachment:
-            String encodingStr = (String) attachInfo.get("encoding");
-            if (encodingStr != null && encodingStr.length() > 0) {
-                if (encodingStr.equalsIgnoreCase("gzip")) {
-                    attachment.setEncoding(AttachmentInternal.AttachmentEncoding.AttachmentEncodingGZIP);
-                } else {
-                    throw new CouchbaseLiteException("Unnkown encoding: " + encodingStr, Status.BAD_ENCODING);
-                }
-                attachment.setEncodedLength(attachment.getLength());
-                if (attachInfo.containsKey("length")) {
-                    Number attachmentLength = (Number) attachInfo.get("length");
-                    attachment.setLength(attachmentLength.intValue());
-                }
-            }
-            if (attachInfo.containsKey("revpos")) {
-                attachment.setRevpos((Integer) attachInfo.get("revpos"));
-            }
-
-            attachments.put(name, attachment);
-        }
-
-        return attachments;
     }
 
     // #pragma mark - UPDATING _attachments DICTS:
@@ -1670,9 +1570,57 @@ public final class Database implements StoreDelegate {
      * source: (NSURL*)source
      */
     @InterfaceAudience.Private
-    public void forceInsert(RevisionInternal rev, List<String> revHistory, URL source) throws CouchbaseLiteException {
-        if (store != null)
-            store.forceInsert(rev, revHistory, source);
+    public void forceInsert(RevisionInternal inRev, List<String> history, URL source)
+            throws CouchbaseLiteException {
+
+        String docID = inRev.getDocID();
+        String revID = inRev.getRevID();
+        if (!Document.isValidDocumentId(docID) || (revID == null))
+            throw new CouchbaseLiteException(Status.BAD_ID);
+
+        int historyCount = 0;
+        if (history != null)
+            historyCount = history.size();
+        if (historyCount == 0) {
+            history = new ArrayList<String>();
+            history.add(revID);
+        } else if (!history.get(0).equals(revID)) {
+            // If inRev's revID doesn't appear in history, add it at the start:
+            List<String> nuHistory = new ArrayList<String>();
+            nuHistory.addAll(history);
+            nuHistory.add(0, revID);
+            history = nuHistory;
+        }
+
+        // Attachments
+        Map<String, Object> attachments = inRev.getAttachments();
+        if (attachments != null) {
+            RevisionInternal updatedRev = inRev.copy();
+            List<String> ancestry = history.subList(1, history.size());
+            Status status = new Status(Status.OK);
+            if (!processAttachmentsForRevision(updatedRev, ancestry, status)) {
+                throw new CouchbaseLiteException(status);
+            }
+            inRev = updatedRev;
+        }
+
+        // TODO: Need to implement Shared (Manager.shared)
+        StorageValidation validationBlock = null;
+        if (validations != null && validations.size() > 0) {
+            validationBlock = new StorageValidation() {
+                @Override
+                public Status validate(RevisionInternal newRev, RevisionInternal prevRev, String parentRevID) {
+                    try {
+                        validateRevision(newRev, prevRev, parentRevID);
+                    } catch (CouchbaseLiteException e) {
+                        return new Status(Status.FORBIDDEN);
+                    }
+                    return new Status(Status.OK);
+                }
+            };
+        }
+
+        store.forceInsert(inRev, history, validationBlock, source);
     }
 
     @InterfaceAudience.Private
@@ -1778,15 +1726,6 @@ public final class Database implements StoreDelegate {
     protected void setMaxRevTreeDepth(int maxRevTreeDepth) {
         if (store != null)
             store.setMaxRevTreeDepth(maxRevTreeDepth);
-    }
-
-    /**
-     * Get the maximum depth of a document's revision tree (or, max length of its revision history.)
-     * Revisions older than this limit will be deleted during a -compact: operation.
-     * Smaller values save space, at the expense of making document conflicts somewhat more likely.
-     */
-    protected int getMaxRevTreeDepth() {
-        return store == null ? 0 : store.getMaxRevTreeDepth();
     }
 
     /**
