@@ -1501,7 +1501,7 @@ public final class Database implements StoreDelegate {
                                 String prevRevID,
                                 boolean allowConflict,
                                 URL source,
-                                Status outStatus) {
+                                Status outStatus) throws CouchbaseLiteException{
 
         boolean deleting = properties == null ||
                 (properties.containsKey("_deleted") &&
@@ -1538,20 +1538,14 @@ public final class Database implements StoreDelegate {
             };
         }
 
-        RevisionInternal putRev = null;
-        try {
-            putRev = store.add(
-                    docID,
-                    prevRevID,
-                    properties,
-                    deleting,
-                    allowConflict,
-                    validationBlock,
-                    outStatus);
-        } catch (CouchbaseLiteException e) {
-            Log.e(TAG, "%d", e.getCBLStatus());
-            outStatus.setCode(e.getCBLStatus().getCode());
-        }
+        RevisionInternal putRev = store.add(
+                docID,
+                prevRevID,
+                properties,
+                deleting,
+                allowConflict,
+                validationBlock,
+                outStatus);
 
         if (putRev != null)
             Log.v(TAG, "--> created %s", putRev);
