@@ -23,7 +23,6 @@ import com.couchbase.lite.util.Log;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
@@ -208,7 +207,7 @@ public final class SavedRevision extends Revision {
     @InterfaceAudience.Private
     protected boolean loadProperties() {
         try {
-            RevisionInternal loadRevision = getDatabase().loadRevisionBody(revisionInternal, EnumSet.noneOf(Database.TDContentOptions.class));
+            RevisionInternal loadRevision = getDatabase().loadRevisionBody(revisionInternal);
             if (loadRevision == null) {
                 Log.w(Database.TAG, "%s: Couldn't load body/sequence", this);
                 return false;

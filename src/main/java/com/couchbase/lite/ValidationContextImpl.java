@@ -3,7 +3,6 @@ package com.couchbase.lite;
 import com.couchbase.lite.internal.RevisionInternal;
 
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
@@ -24,7 +23,7 @@ class ValidationContextImpl implements ValidationContext {
     RevisionInternal getCurrentRevisionInternal() {
         if (currentRevision != null) {
             try {
-                currentRevision = database.loadRevisionBody(currentRevision, EnumSet.noneOf(Database.TDContentOptions.class));
+                currentRevision = database.loadRevisionBody(currentRevision);
             } catch (CouchbaseLiteException e) {
                 throw new RuntimeException(e);
             }

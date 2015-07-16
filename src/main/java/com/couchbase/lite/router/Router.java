@@ -1582,7 +1582,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                     for (RevisionInternal rev : allRevs) {
 
                         try {
-                            db.loadRevisionBody(rev, options);
+                            db.loadRevisionBody(rev);
                         } catch (CouchbaseLiteException e) {
                             if (e.getCBLStatus().getCode() != Status.INTERNAL_SERVER_ERROR) {
                                 Map<String, Object> dict = new HashMap<String, Object>();

@@ -411,7 +411,7 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
 
                             RevisionInternal loadedRev;
                             try {
-                                loadedRev = db.loadRevisionBody(rev, contentOptions);
+                                loadedRev = db.loadRevisionBody(rev);
                                 properties = new HashMap<String, Object>(rev.getProperties());
                             } catch (CouchbaseLiteException e1) {
                                 Log.w(Log.TAG_SYNC, "%s Couldn't get local contents of %s", rev, PusherInternal.this);

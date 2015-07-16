@@ -1168,8 +1168,8 @@ public final class Database implements StoreDelegate {
     }
 
     @InterfaceAudience.Private
-    public RevisionInternal loadRevisionBody(RevisionInternal rev, EnumSet<TDContentOptions> contentOptions) throws CouchbaseLiteException {
-        return store == null ? null : store.loadRevisionBody(rev);
+    public RevisionInternal loadRevisionBody(RevisionInternal rev) throws CouchbaseLiteException {
+        return store.loadRevisionBody(rev);
     }
 
     /**
@@ -1393,7 +1393,7 @@ public final class Database implements StoreDelegate {
         if (oldRevID != null) {
             // Load existing revision if this is a replacement:
             try {
-                loadRevisionBody(oldRev, EnumSet.noneOf(TDContentOptions.class));
+                loadRevisionBody(oldRev);
             } catch (CouchbaseLiteException e) {
                 //if (e.getCBLStatus().getCode() == Status.NOT_FOUND && store.existsDocument(docID, null)) {
                 if (e.getCBLStatus().getCode() == Status.NOT_FOUND &&
@@ -1971,7 +1971,7 @@ public final class Database implements StoreDelegate {
     protected Map<String, Object> getAttachments(String docID, String revID) {
         RevisionInternal mrev = new RevisionInternal(docID, revID, false);
         try {
-            RevisionInternal rev = loadRevisionBody(mrev, EnumSet.noneOf(TDContentOptions.class));
+            RevisionInternal rev = loadRevisionBody(mrev);
             return rev.getAttachments();
         } catch (CouchbaseLiteException e) {
             Log.w(Log.TAG_DATABASE, "Failed to get attachments for " + mrev, e);
