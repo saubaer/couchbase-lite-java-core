@@ -8,8 +8,10 @@ import com.couchbase.lite.support.Base64;
 import com.couchbase.lite.util.Log;
 import com.couchbase.lite.util.Utils;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.HashMap;
@@ -175,18 +177,22 @@ public class AttachmentInternal {
                 break;
             case AttachmentEncodingNone:
                 // special case
-                if(data != null&&blobKey!=null&&database!=null&&database.getAttachmentStore().isGZipped(blobKey)) {
+                if (data != null && blobKey != null && database != null &&
+                        database.getAttachmentStore().isGZipped(blobKey)) {
                     data = Utils.decompressByGzip(data);
                     encoding = AttachmentEncoding.AttachmentEncodingGZIP;
                 }
                 break;
         }
-        if(data == null)
+        if (data == null)
             Log.w(Database.TAG, "Unable to decode attachment!");
 
         return data;
     }
 
+    public InputStream getContentInputStream() {
+        return new ByteArrayInputStream(getContent());
+    }
     public URL getContentURL() throws MalformedURLException {
         String path = database.getAttachmentStore().getBlobPathForKey(blobKey);
         return path != null ? new File(path).toURI().toURL() : null;

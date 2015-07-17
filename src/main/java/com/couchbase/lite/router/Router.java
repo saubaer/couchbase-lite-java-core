@@ -29,6 +29,8 @@ import com.couchbase.lite.replicator.Replication.ChangeListener;
 import com.couchbase.lite.replicator.Replication.ReplicationStatus;
 import com.couchbase.lite.replicator.ReplicationState;
 import com.couchbase.lite.storage.SQLException;
+import com.couchbase.lite.store.Store;
+import com.couchbase.lite.support.RevisionUtils;
 import com.couchbase.lite.support.Version;
 import com.couchbase.lite.util.Log;
 import com.couchbase.lite.util.StreamUtils;
@@ -1551,6 +1553,7 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                 if (isLocalDoc) {
                     rev = db.getLocalDocument(docID, revID);
                 } else {
+                    /*
                     rev = db.getDocument(docID, revID, options);
                     // Handle ?atts_since query by stubbing out older attachments:
                     //?atts_since parameter - value is a (URL-encoded) JSON array of one or more revision IDs.
@@ -1564,13 +1567,26 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                             db.stubOutAttachmentsIn(rev, generation + 1);
                         }
                     }
+                    */
+                    boolean includeAttachments = options.contains(TDContentOptions.TDIncludeAttachments);
+                    if (includeAttachments) {
+                        options.remove(TDContentOptions.TDIncludeAttachments);
+                    }
+                    rev = db.getDocument(docID, revID, options);
+                    if (rev != null) {
+                        rev = applyOptionsToRevision(options, rev);
+                    }
+                    if (rev == null) {
+
+                    }
                 }
-                if (rev == null) {
+
+                if (rev == null)
                     return new Status(Status.NOT_FOUND);
-                }
-                if (cacheWithEtag(rev.getRevID())) {
+                if (cacheWithEtag(rev.getRevID()))
                     return new Status(Status.NOT_MODIFIED);  // set ETag and check conditional GET
-                }
+
+                // TODO
 
                 connection.setResponseBody(rev.getBody());
             } else {
@@ -1596,7 +1612,6 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
                         Map<String, Object> dict = new HashMap<String, Object>();
                         dict.put("ok", rev.getProperties());
                         result.add(dict);
-
                     }
                 } else {
                     // ?open_revs=[...] returns an array of revisions of the document:
@@ -1632,10 +1647,81 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
         }
     }
 
+    /**
+     * in CBL_Router+Handlers.m
+     * - (CBL_Revision*) applyOptions: (CBLContentOptions)options
+     * toRevision: (CBL_Revision*)rev
+     * status: (CBLStatus*)outStatus
+     * 1.1 or earlier => Database.extraPropertiesForRevision()
+     */
+    private RevisionInternal applyOptionsToRevision(EnumSet<TDContentOptions> options, RevisionInternal rev) {
+        if (options != null && (
+                options.contains(TDContentOptions.TDIncludeLocalSeq) ||
+                        options.contains(TDContentOptions.TDIncludeRevs) ||
+                        options.contains(TDContentOptions.TDIncludeRevsInfo) ||
+                        options.contains(TDContentOptions.TDIncludeConflicts) ||
+                        options.contains(TDContentOptions.TDBigAttachmentsFollow))) {
+
+            Map<String, Object> dst = new HashMap<String, Object>();
+            dst.putAll(rev.getProperties());
+            Store store = db.getStore();
+
+            if (options.contains(TDContentOptions.TDIncludeLocalSeq)) {
+                dst.put("_local_seq", rev.getSequence());
+                rev.setProperties(dst);
+            }
+            if (options.contains(TDContentOptions.TDIncludeRevs)) {
+                List<RevisionInternal> revs = db.getRevisionHistory(rev);
+                Map<String, Object> historyDict = RevisionUtils.makeRevisionHistoryDict(revs);
+                dst.put("_revisions", historyDict);
+                rev.setProperties(dst);
+            }
+            if (options.contains(TDContentOptions.TDIncludeRevsInfo)) {
+                List<Object> revsInfo = new ArrayList<Object>();
+                List<RevisionInternal> revs = db.getRevisionHistory(rev);
+                for (RevisionInternal historicalRev : revs) {
+                    Map<String, Object> revHistoryItem = new HashMap<String, Object>();
+                    String status = "available";
+                    if (historicalRev.isDeleted()) {
+                        status = "deleted";
+                    }
+                    if (historicalRev.isMissing()) {
+                        status = "missing";
+                    }
+                    revHistoryItem.put("rev", historicalRev.getRevID());
+                    revHistoryItem.put("status", status);
+                    revsInfo.add(revHistoryItem);
+                }
+                dst.put("_revs_info", revsInfo);
+                rev.setProperties(dst);
+            }
+            if (options.contains(TDContentOptions.TDIncludeConflicts)) {
+                RevisionList revs = store.getAllRevisions(rev.getDocID(), true);
+                if (revs.size() > 1) {
+                    List<String> conflicts = new ArrayList<String>();
+                    for (RevisionInternal aRev : revs) {
+                        if (aRev.equals(rev) || aRev.isDeleted()) {
+                            // don't add in this case
+                        } else {
+                            conflicts.add(aRev.getRevID());
+                        }
+                    }
+                    dst.put("_conflicts", conflicts);
+                }
+                rev.setProperties(dst);
+            }
+            if (options.contains(TDContentOptions.TDBigAttachmentsFollow)) {
+                RevisionInternal nuRev = new RevisionInternal(dst);
+                Status outStatus = new Status(Status.OK);
+                if (!db.expandAttachments(nuRev, 0, false, getBooleanQuery("att_encoding_info"), outStatus))
+                    return null;
+                rev = nuRev;
+            }
+        }
+        return rev;
+    }
 
     public Status do_GET_Attachment(Database _db, String docID, String _attachmentName) {
-        //TODO
-    /*
         try {
             // http://wiki.apache.org/couchdb/HTTP_Document_API#GET
             EnumSet<TDContentOptions> options = getContentOptions();
@@ -1651,27 +1737,26 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
 
             String type = null;
             String acceptEncoding = connection.getRequestProperty("accept-encoding");
-            Attachment contents = db.getAttachmentForSequence(rev.getSequence(), _attachmentName);
-
-            if (contents == null) {
+            AttachmentInternal attachment = db.getAttachment(rev, _attachmentName);
+            if (attachment == null) {
                 return new Status(Status.NOT_FOUND);
             }
-            type = contents.getContentType();
+
+            type = attachment.getContentType();
             if (type != null) {
                 connection.getResHeader().add("Content-Type", type);
             }
-            if (acceptEncoding != null && acceptEncoding.contains("gzip") && contents.getGZipped()) {
+            if (acceptEncoding != null && acceptEncoding.contains("gzip") &&
+                    attachment.getEncoding() == AttachmentInternal.AttachmentEncoding.AttachmentEncodingGZIP) {
                 connection.getResHeader().add("Content-Encoding", "gzip");
             }
 
-            connection.setResponseInputStream(contents.getContent());
+            connection.setResponseInputStream(attachment.getContentInputStream());
             return new Status(Status.OK);
 
         } catch (CouchbaseLiteException e) {
             return e.getCBLStatus();
         }
-       */
-        return null;
     }
 
     /**
@@ -1742,10 +1827,10 @@ public class Router implements Database.ChangeListener, Database.DatabaseListene
     /**
      * in CBL_Router+Handlers.m
      * - (CBLStatus) update: (CBLDatabase*)db
-     *                docID: (NSString*)docID
-     *                 body: (CBL_Body*)body
-     *             deleting: (BOOL)deleting
-     *                error: (NSError**)outError
+     * docID: (NSString*)docID
+     * body: (CBL_Body*)body
+     * deleting: (BOOL)deleting
+     * error: (NSError**)outError
      */
     private Status update(Database _db, String docID, Body body, boolean deleting) {
         Status status = new Status();

@@ -763,8 +763,9 @@ public final class Database implements StoreDelegate {
      * @param decodeAttachments  If YES, attachments with "encoding" properties will be decoded.
      * @param outStatus  On failure, will be set to the error status.
      * @return  YES on success, NO on failure.
-     * */
-    protected boolean expandAttachments(final RevisionInternal rev,
+     */
+    @InterfaceAudience.Private
+    public boolean expandAttachments(final RevisionInternal rev,
                                         final int minRevPos,
                                         final boolean allowFollows,
                                         final boolean decodeAttachments,
@@ -1185,12 +1186,6 @@ public final class Database implements StoreDelegate {
         return store == null ? null : store.getAllRevisions(docID, onlyCurrent);
     }
 
-    // NOTE: router-only
-    @InterfaceAudience.Private
-    public String findCommonAncestorOf(RevisionInternal rev, List<String> revIDs) {
-        return store == null ? null : store.findCommonAncestor(rev, revIDs);
-    }
-
     /**
      * Returns the revision history as a _revisions dictionary, as returned by the REST API's ?revs=true option.
      */
@@ -1255,46 +1250,6 @@ public final class Database implements StoreDelegate {
             //NOOP: retval will be null
         }
         return retval;
-    }
-
-    /**
-     * Modifies a RevisionInternal's body by changing all attachments with revpos < minRevPos into stubs.
-     */
-    // NOTE: router-only
-    @InterfaceAudience.Private
-    public void stubOutAttachmentsIn(RevisionInternal rev, int minRevPos) {
-        if (minRevPos <= 1) {
-            return;
-        }
-        Map<String, Object> properties = (Map<String, Object>) rev.getProperties();
-        Map<String, Object> attachments = null;
-        if (properties != null) {
-            attachments = (Map<String, Object>) properties.get("_attachments");
-        }
-        Map<String, Object> editedProperties = null;
-        Map<String, Object> editedAttachments = null;
-        for (String name : attachments.keySet()) {
-            Map<String, Object> attachment = (Map<String, Object>) attachments.get(name);
-            int revPos = (Integer) attachment.get("revpos");
-            Object stub = attachment.get("stub");
-            if (revPos > 0 && revPos < minRevPos && (stub == null)) {
-                // Strip this attachment's body. First make its dictionary mutable:
-                if (editedProperties == null) {
-                    editedProperties = new HashMap<String, Object>(properties);
-                    editedAttachments = new HashMap<String, Object>(attachments);
-                    editedProperties.put("_attachments", editedAttachments);
-                }
-                // ...then remove the 'data' and 'follows' key:
-                Map<String, Object> editedAttachment = new HashMap<String, Object>(attachment);
-                editedAttachment.remove("data");
-                editedAttachment.remove("follows");
-                editedAttachment.put("stub", true);
-                editedAttachments.put(name, editedAttachment);
-                Log.v(Database.TAG, "Stubbed out attachment.  minRevPos: %s rev: %s name: %s revpos: %s", minRevPos, rev, name, revPos);
-            }
-        }
-        if (editedProperties != null)
-            rev.setProperties(editedProperties);
     }
 
     // Replaces attachment data whose revpos is < minRevPos with stubs.
@@ -1802,8 +1757,9 @@ public final class Database implements StoreDelegate {
     /**
      * Returns an array of TDRevs in reverse chronological order, starting with the given revision.
      */
-    protected List<RevisionInternal> getRevisionHistory(RevisionInternal rev) {
-        return store == null ? null : store.getRevisionHistory(rev);
+    @InterfaceAudience.Private
+    public List<RevisionInternal> getRevisionHistory(RevisionInternal rev) {
+        return store.getRevisionHistory(rev);
     }
 
     private String getDesignDocFunction(String fnName, String key, List<String> outLanguageList) {
@@ -1973,7 +1929,8 @@ public final class Database implements StoreDelegate {
         }
     }
 
-    protected AttachmentInternal getAttachment(RevisionInternal rev, String filename)
+    @InterfaceAudience.Private
+    public AttachmentInternal getAttachment(RevisionInternal rev, String filename)
             throws CouchbaseLiteException {
         assert (filename != null);
         Map<String, Object> attachments = rev.getAttachments();
