@@ -376,8 +376,6 @@ public interface Store {
 
     String privateUUID();
 
-    RevisionList getAllRevisions(String docId, long docNumericID, boolean onlyCurrent);
-
     void deleteLocalDocument(String docID, String revID) throws CouchbaseLiteException;
 
     boolean replaceUUIDs();

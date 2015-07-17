@@ -623,8 +623,7 @@ public class SQLiteStore implements Store {
         return result;
     }
 
-    @Override
-    public RevisionList getAllRevisions(String docId, long docNumericID, boolean onlyCurrent) {
+    private RevisionList getAllRevisions(String docId, long docNumericID, boolean onlyCurrent) {
         String sql = null;
         if (onlyCurrent)
             sql = "SELECT sequence, revid, deleted FROM revs " +

@@ -231,7 +231,7 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
             @Override
             public void onCompletion(HttpResponse httpResponse, Object result, Throwable e) {
                 creatingTarget = false;
-                if(e != null && e instanceof HttpResponseException && ((HttpResponseException)e).getStatusCode() != 412) {
+                if (e != null && e instanceof HttpResponseException && ((HttpResponseException) e).getStatusCode() != 412) {
                     Log.e(Log.TAG_SYNC, this + ": Failed to create remote db", e);
                     setError(e);
                     triggerStop();  // this is fatal: no db to push to!
@@ -432,10 +432,15 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
                                 // Look for the latest common ancestor and stub out older attachments:
                                 int minRevPos = findCommonAncestor(populatedRev, possibleAncestors);
 
-                                Database.stubOutAttachmentsInRevBeforeRevPos(populatedRev, minRevPos + 1, false);
+                                //Database.stubOutAttachmentsInRevBeforeRevPos(populatedRev, minRevPos + 1, false);
+
+                                Status status = new Status(Status.OK);
+                                if(!db.expandAttachments(populatedRev, minRevPos + 1, !dontSendMultipart, false, status)){
+                                    Log.w(Log.TAG_SYNC, "%s: Couldn't expand attachments of %s", this, populatedRev);
+                                    continue;
+                                }
 
                                 properties = populatedRev.getProperties();
-
                                 if (!dontSendMultipart && uploadMultipartRevision(populatedRev)) {
                                     continue;
                                 }
@@ -448,16 +453,6 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
                             revsToSend.add(rev);
                             docsToSend.add(properties);
 
-                            //TODO: port this code from iOS
-                                /*
-                                bufferedSize += [CBLJSON estimateMemorySize: properties];
-                                if (bufferedSize > kMaxBulkDocsObjectSize) {
-                                    [self uploadBulkDocs: docsToSend changes: revsToSend];
-                                    docsToSend = $marray();
-                                    revsToSend = [[CBL_RevisionList alloc] init];
-                                    bufferedSize = 0;
-                                }
-                                */
 
                         }
 
@@ -475,7 +470,6 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
 
         });
         pendingFutures.add(future);
-
     }
 
     /**
@@ -529,7 +523,6 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
                             removePending(revisionInternal);
                         }
                     }
-
                 }
                 if (e != null) {
                     setError(e);
@@ -537,11 +530,9 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
                     Log.v(Log.TAG_SYNC, "%s: POSTed to _bulk_docs", PusherInternal.this);
                 }
                 addToCompletedChangesCount(numDocsToSend);
-
             }
         });
         pendingFutures.add(future);
-
     }
 
     /**
@@ -555,16 +546,6 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
 
         Map<String, Object> revProps = revision.getProperties();
 
-        // TODO: refactor this to
-        /*
-            // Get the revision's properties:
-            NSError* error;
-            if (![_db inlineFollowingAttachmentsIn: rev error: &error]) {
-                self.error = error;
-                [self revisionFailed];
-                return;
-            }
-         */
         Map<String, Object> attachments = (Map<String, Object>) revProps.get("_attachments");
         for (String attachmentKey : attachments.keySet()) {
             Map<String, Object> attachment = (Map<String, Object>) attachments.get(attachmentKey);

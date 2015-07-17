@@ -1252,47 +1252,6 @@ public final class Database implements StoreDelegate {
         return retval;
     }
 
-    // Replaces attachment data whose revpos is < minRevPos with stubs.
-    // If attachmentsFollow==YES, replaces data with "follows" key.
-    @InterfaceAudience.Private
-    public static void stubOutAttachmentsInRevBeforeRevPos(final RevisionInternal rev, final int minRevPos, final boolean attachmentsFollow) {
-        if (minRevPos <= 1 && !attachmentsFollow) {
-            return;
-        }
-
-        rev.mutateAttachments(new CollectionUtils.Functor<Map<String, Object>, Map<String, Object>>() {
-            public Map<String, Object> invoke(Map<String, Object> attachment) {
-                int revPos = 0;
-                if (attachment.get("revpos") != null) {
-                    revPos = (Integer) attachment.get("revpos");
-                }
-
-                boolean includeAttachment = (revPos == 0 || revPos >= minRevPos);
-                boolean stubItOut = !includeAttachment && (attachment.get("stub") == null || (Boolean) attachment.get("stub") == false);
-                boolean addFollows = includeAttachment && attachmentsFollow && (attachment.get("follows") == null || (Boolean) attachment.get("follows") == false);
-
-                if (!stubItOut && !addFollows) {
-                    return attachment;  // no change
-                }
-
-                // Need to modify attachment entry:
-                Map<String, Object> editedAttachment = new HashMap<String, Object>(attachment);
-                editedAttachment.remove("data");
-                if (stubItOut) {
-                    // ...then remove the 'data' and 'follows' key:
-                    editedAttachment.remove("follows");
-                    editedAttachment.put("stub", true);
-                    Log.v(Log.TAG_SYNC, "Stubbed out attachment %s: revpos %d < %d", rev, revPos, minRevPos);
-                } else if (addFollows) {
-                    editedAttachment.remove("stub");
-                    editedAttachment.put("follows", true);
-                    Log.v(Log.TAG_SYNC, "Added 'follows' for attachment %s: revpos %d >= %d", rev, revPos, minRevPos);
-                }
-                return editedAttachment;
-            }
-        });
-    }
-
     // Replaces the "follows" key with the real attachment data in all attachments to 'doc'.
     @InterfaceAudience.Private
     public boolean inlineFollowingAttachmentsIn(RevisionInternal rev) {
@@ -1389,7 +1348,6 @@ public final class Database implements StoreDelegate {
             }
             attachments.remove(filename);
         }
-
 
         Map<String, Object> properties = new HashMap<String, Object>();
         properties.putAll(oldRev.getProperties());
@@ -1941,7 +1899,6 @@ public final class Database implements StoreDelegate {
         }
         return getAttachment((Map<String, Object>) attachments.get(filename), filename);
     }
-
 
     private Map<String, Object> getPendingAttachmentsByDigest() {
         if (pendingAttachmentsByDigest == null)
