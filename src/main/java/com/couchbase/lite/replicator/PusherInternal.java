@@ -31,7 +31,6 @@ import java.net.URL;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -400,19 +399,9 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
                                 continue;
                             }
 
-                            // Get the revision's properties:
-                            EnumSet<Database.TDContentOptions> contentOptions = EnumSet.of(
-                                    Database.TDContentOptions.TDIncludeAttachments
-                            );
-
-                            if (!dontSendMultipart && revisionBodyTransformationBlock == null) {
-                                contentOptions.add(Database.TDContentOptions.TDBigAttachmentsFollow);
-                            }
-
                             RevisionInternal loadedRev;
                             try {
                                 loadedRev = db.loadRevisionBody(rev);
-                                properties = new HashMap<String, Object>(rev.getProperties());
                             } catch (CouchbaseLiteException e1) {
                                 Log.w(Log.TAG_SYNC, "%s Couldn't get local contents of %s", rev, PusherInternal.this);
                                 continue;
@@ -432,8 +421,6 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
                                 // Look for the latest common ancestor and stub out older attachments:
                                 int minRevPos = findCommonAncestor(populatedRev, possibleAncestors);
 
-                                //Database.stubOutAttachmentsInRevBeforeRevPos(populatedRev, minRevPos + 1, false);
-
                                 Status status = new Status(Status.OK);
                                 if(!db.expandAttachments(populatedRev, minRevPos + 1, !dontSendMultipart, false, status)){
                                     Log.w(Log.TAG_SYNC, "%s: Couldn't expand attachments of %s", this, populatedRev);
@@ -452,8 +439,6 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
 
                             revsToSend.add(rev);
                             docsToSend.add(properties);
-
-
                         }
 
                         // Post the revisions to the destination:
