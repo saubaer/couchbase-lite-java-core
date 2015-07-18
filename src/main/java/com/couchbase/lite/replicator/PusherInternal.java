@@ -399,6 +399,12 @@ public class PusherInternal extends ReplicationInternal implements Database.Chan
                                 continue;
                             }
 
+                            // NOTE: force to load body by Database.loadRevisionBody()
+                            // In SQLiteStore.loadRevisionBody() does not load data from database
+                            // if sequence != 0 && body != null
+                            rev.setSequence(0);
+                            rev.setBody(null);
+
                             RevisionInternal loadedRev;
                             try {
                                 loadedRev = db.loadRevisionBody(rev);
